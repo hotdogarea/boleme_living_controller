@@ -118,8 +118,9 @@ class Console(QMainWindow):
         root.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("播了么直播中控助手")
+        title = QLabel("播了么")
         title.setObjectName("title")
+        title.setToolTip("播了么直播中控助手")
         header.addWidget(title)
         header.addStretch()
         self.platform = QComboBox()
