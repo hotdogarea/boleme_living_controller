@@ -18,11 +18,14 @@ class Bridge(QObject):
         self.token = token
         self.port = port
         self._stop = threading.Event()
-        self._clients = set()
+        self._clients = {}
         self._lock = threading.Lock()
         self._thread = None
         self._platform_status = "未连接平台"
         self.platform = ""
+        self.session_id = ""
+        self.account_id = ""
+        self.ready = False
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -49,10 +52,9 @@ class Bridge(QObject):
                 socket.close(code=1008, reason="unauthorized")
                 return
             with self._lock:
-                self._clients.add(pending)
+                self._clients[pending] = hello.get("subscribe_barrage") is not False
             socket.send(json.dumps({"type": "ready", "version": 1}, ensure_ascii=False))
-            socket.send(json.dumps({"type": "platform_status", "status": self._platform_status,
-                                    "platform": self.platform}, ensure_ascii=False))
+            socket.send(self._status_payload())
             while not self._stop.is_set():
                 try:
                     while True:
@@ -64,13 +66,14 @@ class Bridge(QObject):
                 except TimeoutError:
                     continue
                 command = json.loads(raw)
-                if command.get("type") == "send_text":
+                if command.get("type") in {"send_text", "send_public_text"}:
                     value = command.get("text")
                     msg_id = command.get("msg_id", "")
                     if (isinstance(value, str) and 0 < len(value.strip()) <= 300
                             and isinstance(msg_id, str) and len(msg_id) <= 200
-                            and isinstance(command.get("session_id"), str)
-                            and isinstance(command.get("platform"), str)):
+                            and isinstance(command.get("session_id"), str) and command["session_id"]
+                            and isinstance(command.get("platform"), str) and command["platform"]
+                            and (command["type"] != "send_public_text" or not msg_id)):
                         self.send_requested.emit(command)
                     else:
                         socket.send(json.dumps({"type": "error", "message": "invalid text"}))
@@ -84,20 +87,28 @@ class Bridge(QObject):
             pass
         finally:
             with self._lock:
-                self._clients.discard(pending)
+                self._clients.pop(pending, None)
 
     def broadcast(self, event: dict):
         payload = json.dumps({"type": "barrage", "event": event}, ensure_ascii=False)
-        self._broadcast_payload(payload)
+        self._broadcast_payload(payload, barrage=True)
 
     def broadcast_status(self, status: str):
         self._platform_status = status
-        self._broadcast_payload(json.dumps({"type": "platform_status", "status": status,
-                                            "platform": self.platform}, ensure_ascii=False))
+        self._broadcast_payload(self._status_payload())
 
-    def _broadcast_payload(self, payload: str):
+    def _status_payload(self):
+        return json.dumps({
+            "type": "platform_status", "status": self._platform_status,
+            "platform": self.platform, "session_id": self.session_id,
+            "account_id": self.account_id, "ready": self.ready,
+        }, ensure_ascii=False)
+
+    def _broadcast_payload(self, payload: str, barrage=False):
         with self._lock:
-            for client in self._clients:
+            for client, subscribed in self._clients.items():
+                if barrage and not subscribed:
+                    continue
                 try:
                     client.put_nowait(payload)
                 except queue.Full:

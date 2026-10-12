@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
 from .bridge import Bridge
 from .browser_worker import BrowserWorker
 from .platforms import PLATFORMS
-from .process_guard import legacy_douyin_grabber_pids
 from .scheduler import Phrase, Product, SequenceScheduler
 from .storage import (
     account_profile_path, accounts_for, add_account, bridge_token, data_dir,
@@ -86,8 +85,6 @@ class Console(QMainWindow):
         self._closing = False
         self._pending_account_id = None
         self._pending_platform = None
-        self._warned_legacy_pids = set()
-        self._legacy_warning_box = None
         self._pending_events = deque(maxlen=2000)
         self._raw_events = {}
         self._event_count = 0
@@ -112,7 +109,6 @@ class Console(QMainWindow):
         self.barrage_timer.setInterval(100)
         self.barrage_timer.timeout.connect(self._flush_barrage)
         self.barrage_timer.start()
-        QTimer.singleShot(0, self._warn_legacy_grabber)
 
     def _build(self):
         base = QWidget()
@@ -434,8 +430,6 @@ class Console(QMainWindow):
         capture = "评论 / 进房 / 点赞 / 关注" if spec.capture == "douyin" else "评论" if spec.capture != "none" else "暂不支持弹幕"
         self.capability.setText(f"采集：{capture}")
         self._refresh_accounts()
-        if self.isVisible():
-            QTimer.singleShot(0, self._warn_legacy_grabber)
 
     def _bridge_select_platform(self, platform):
         index = self.platform.findData(platform)
@@ -467,26 +461,6 @@ class Console(QMainWindow):
             return
         self.platform.setCurrentIndex(index)
         self._start_connection()
-
-    def _warn_legacy_grabber(self):
-        if self.platform.currentData() not in ("douyin", "buyin"):
-            return
-        pids = set(legacy_douyin_grabber_pids())
-        if not pids - self._warned_legacy_pids:
-            return
-        self._warned_legacy_pids.update(pids)
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("检测到旧抖音弹幕插件")
-        dialog.setText(
-            "旧抖音弹幕插件正在运行。若使用中控助手采集弹幕，请先关闭旧插件，"
-            "再从语音引擎连接中控助手，以免同一条弹幕被重复处理。"
-        )
-        dialog.setInformativeText("中控助手不会自动关闭旧插件。")
-        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._legacy_warning_box = dialog
-        dialog.open()
 
     def _refresh_accounts(self, preferred_id=None):
         platform = self.platform.currentData()
@@ -751,7 +725,6 @@ class Console(QMainWindow):
         self._start_connection()
 
     def _start_connection(self):
-        self._warn_legacy_grabber()
         if not self._save():
             return
         platform = self.platform.currentData()
@@ -766,6 +739,10 @@ class Console(QMainWindow):
             platform, data_dir() / "profiles", self,
             account_id=account_id, profile_path=profile,
         )
+        self.bridge.platform = platform
+        self.bridge.session_id = self.worker.session_id
+        self.bridge.account_id = account_id
+        self.bridge.ready = False
         self.worker.state_changed.connect(self._worker_state)
         self.worker.event_received.connect(self._event)
         self.worker.action_started.connect(self._action_started)
@@ -779,6 +756,7 @@ class Console(QMainWindow):
 
     def _worker_state(self, text):
         self.connected = "已就绪" in text or "监听中" in text
+        self.bridge.ready = self.connected
         if "已关闭" in text or text == "已停止":
             self.connect_button.setText("正在重置…")
             self.connect_button.setEnabled(False)
@@ -792,6 +770,9 @@ class Console(QMainWindow):
 
     def _worker_finished(self):
         self.connected = False
+        self.bridge.ready = False
+        self.bridge.session_id = ""
+        self.bridge.account_id = ""
         self._worker_busy = False
         self.phrase_enabled.setChecked(False)
         self.product_enabled.setChecked(False)
@@ -860,7 +841,10 @@ class Console(QMainWindow):
                 and command.get("platform") == self.platform.currentData()
                 and command.get("session_id") == self.worker.session_id):
             msg_id = str(command.get("msg_id") or "")
-            if self.worker.command("send", {"text": command["text"], "msg_id": msg_id}):
+            if command.get("type") == "send_public_text":
+                if self.worker.command("send", command["text"]):
+                    self._log("语音引擎的公开文字已提交发送")
+            elif self.worker.command("send", {"text": command["text"], "msg_id": msg_id}):
                 self._mark_reply(msg_id, "发送中")
         else:
             self._log("已忽略过期或跨平台的文字回发")
