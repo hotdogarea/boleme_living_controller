@@ -734,6 +734,7 @@ class Console(QMainWindow):
         self.worker.event_received.connect(self._event)
         self.worker.action_started.connect(self._action_started)
         self.worker.action_result.connect(self._action_result)
+        self.worker.capture_notice.connect(self._log)
         self.worker.reply_result.connect(self._reply_result)
         self.worker.finished.connect(self._worker_finished)
         self.worker.start()

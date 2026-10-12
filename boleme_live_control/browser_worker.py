@@ -19,6 +19,7 @@ class BrowserWorker(QThread):
     event_received = pyqtSignal(dict)
     action_started = pyqtSignal(str)
     action_result = pyqtSignal(str, bool, str)
+    capture_notice = pyqtSignal(str)
     reply_result = pyqtSignal(str, bool)
 
     def __init__(self, platform_key: str, profile_root: Path, parent=None, *,
@@ -43,6 +44,7 @@ class BrowserWorker(QThread):
         self._outgoing = []
         self._xhs_sessions = []
         self._capture_issue_times = {}
+        self._comment_response_notice_reported = False
 
     def command(self, action: str, value=None):
         try:
@@ -120,13 +122,23 @@ class BrowserWorker(QThread):
         except Exception as exc:
             status = getattr(response, "status", "未知")
             content_type = (getattr(response, "headers", {}) or {}).get("content-type", "未知")
+            if endpoint == "中控评论":
+                if not self._comment_response_notice_reported:
+                    self._comment_response_notice_reported = True
+                    self.capture_notice.emit(
+                        f"提示 · 中控评论接口响应未解析 ({type(exc).__name__}, "
+                        f"HTTP {status}, {content_type})；这一路异常不代表弹幕采集已停止，"
+                        "程序仍会尝试罗盘监听"
+                    )
+                return
             key = (endpoint, status, content_type, type(exc).__name__)
             now = time.monotonic()
             if now - self._capture_issue_times.get(key, 0) >= 60:
                 self._capture_issue_times[key] = now
                 self.action_result.emit(
                     "capture", False,
-                    f"{endpoint}响应无法解析 (HTTP {status}, {content_type})；请确认登录和直播间状态",
+                    f"{endpoint}响应无法解析 ({type(exc).__name__}, "
+                    f"HTTP {status}, {content_type})；请确认登录和直播间状态",
                 )
 
     def _kuaishou_hook(self, route):
