@@ -11,13 +11,13 @@
 .\.venv\Scripts\python.exe -m boleme_live_control
 ```
 
-运行依赖只安装到本目录的 `.venv`，不使用语音引擎的虚拟环境。首次使用 Playwright 自带 Chromium 时需在本环境执行 `.\.venv\Scripts\python.exe -m playwright install chromium`；本机已有 Edge/Chrome 时优先使用系统浏览器。源码联调完成后，先用 `.\.venv\Scripts\python.exe -m pip install -r .\requirements-build.txt` 安装构建依赖，再运行 `.\build.ps1`。打包输出在 `dist/BolemeLiveControl`；发布时把其中的 EXE 和 `_internal` 一起放到主程序 EXE 旁边的 `BolemeLiveControl` 目录，不要只复制 EXE。
+运行依赖只安装到本目录的 `.venv`，不使用语音引擎的虚拟环境。首次使用 Playwright 自带 Chromium 时需在本环境执行 `.\.venv\Scripts\python.exe -m playwright install chromium`；本机已有 Edge/Chrome 时优先使用系统浏览器。源码联调完成后，先用 `.\.venv\Scripts\python.exe -m pip install -r .\requirements-build.txt` 安装构建依赖，再运行 `.\build.ps1`。打包输出在 `dist/BolemeLiveControl`；随语音引擎发布时，将整个目录放到主程序 EXE 所在目录的 `dist/plugin/BolemeLiveControl` 下，保留 EXE、`_internal` 等全部文件，不要只复制 EXE。旧版主程序 EXE 同级的 `BolemeLiveControl` 目录仍可作为兼容路径。构建脚本不会自动把助手复制进语音引擎安装包。
 
 打包诊断：`BolemeLiveControl.exe --smoke-browser` 只打开并关闭无网络的空白页，以退出码 0 表示浏览器驱动可用。运行本项目的独立测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests`。
 
 选择平台和账号后连接，在浏览器里完成登录、开播并进入中控台。选择另一个账号会先关闭当前浏览器，再打开该账号的独立浏览器资料目录；同一时刻只运行一个账号。账号管理可以添加、改名和删除账号。登录未过期时重连会复用浏览器资料；过期时应在浏览器里重新扫码，具体有效期由平台决定。快捷语和商品讲解都由用户明确勾选后才自动运行，按表格顺序执行；可在“直播互动”里选中评论后点击“回复”，或直接公开发言。运行记录始终固定在窗口底部，可拖动分隔线调整高度。
 
-所有浏览器登录资料保存在当前 Windows 用户的 `%LOCALAPPDATA%\Boleme\LiveControl\profiles`，设置和通信令牌保存在同级 `settings.json`。旧版单账号资料继续作为每个平台的“默认账号”，不会复制 Cookie；新增账号资料位于 `profiles\accounts\<platform>\<account_id>`。删除新增账号时会一并删除对应的本机浏览器资料；默认账号不能删除。**打包和分发时不要复制整个 `%LOCALAPPDATA%\Boleme\LiveControl` 目录。**
+所有浏览器登录资料保存在当前 Windows 用户的 `%LOCALAPPDATA%\Boleme\LiveControl\profiles`，设置和通信令牌保存在同级 `settings.json`。旧版单账号资料继续作为每个平台的“默认账号”，不会复制 Cookie；新增账号资料位于 `profiles\accounts\<platform>\<account_id>`。删除新增账号时会一并删除对应的本机浏览器资料；默认账号不能删除。插件安装目录只需读取和执行权限，当前用户的 `%LOCALAPPDATA%` 需要可写；一般不需要管理员权限。**打包和分发时不要复制整个 `%LOCALAPPDATA%\Boleme\LiveControl` 目录。**
 
 弹幕表格显示时间、昵称、内容、类型和文字发送状态；**没有用户等级列**，因为 OBA 的抖店评论/罗盘事件没有可靠的通用等级字段。选中弹幕后点击“查看字段”，可查看标准化事件和该条平台原始 JSON，仅保留在助手内存，不写入日志。请勿公开分享可能包含个人信息的原始数据。表格中的手动“发文字”和主程序同步的 AI 文案都发送到平台公共评论框，不会艾特或定向回复；手动发文字的 `msg_id` 仅关联本地状态。
 
