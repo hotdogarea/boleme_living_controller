@@ -85,6 +85,7 @@ class Console(QMainWindow):
         self._worker_busy = False
         self._closing = False
         self._pending_account_id = None
+        self._pending_platform = None
         self._warned_legacy_pids = set()
         self._legacy_warning_box = None
         self._pending_events = deque(maxlen=2000)
@@ -98,7 +99,9 @@ class Console(QMainWindow):
         self._build()
         self._load()
         self.bridge = Bridge(bridge_token(self.settings))
+        self.bridge.platform = self.platform.currentData()
         self.bridge.send_requested.connect(self._bridge_send)
+        self.bridge.platform_requested.connect(self._bridge_select_platform)
         self.bridge.status_changed.connect(self._log)
         self.bridge.start()
         self.timer = QTimer(self)
@@ -426,11 +429,44 @@ class Console(QMainWindow):
 
     def _platform_changed(self):
         spec = PLATFORMS[self.platform.currentData()]
+        if hasattr(self, 'bridge'):
+            self.bridge.platform = spec.key
         capture = "评论 / 进房 / 点赞 / 关注" if spec.capture == "douyin" else "评论" if spec.capture != "none" else "暂不支持弹幕"
         self.capability.setText(f"采集：{capture}")
         self._refresh_accounts()
         if self.isVisible():
             QTimer.singleShot(0, self._warn_legacy_grabber)
+
+    def _bridge_select_platform(self, platform):
+        index = self.platform.findData(platform)
+        if index < 0:
+            return
+        if platform == self.platform.currentData():
+            if not (self.worker and self.worker.isRunning()):
+                self._start_connection()
+            return
+        if self.worker and self.worker.isRunning():
+            answer = QMessageBox.question(
+                self, "切换中控平台",
+                "语音引擎请求切换采集平台。当前浏览器和自动任务将停止，是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.bridge.broadcast_status("平台切换已取消")
+                return
+            self._pending_platform = platform
+            self._pending_account_id = None
+            self.connected = False
+            self.phrase_enabled.setChecked(False)
+            self.product_enabled.setChecked(False)
+            self.connect_button.setText("正在切换…")
+            self.connect_button.setEnabled(False)
+            self.bridge.broadcast_status("正在切换平台")
+            self.worker.stop()
+            return
+        self.platform.setCurrentIndex(index)
+        self._start_connection()
 
     def _warn_legacy_grabber(self):
         if self.platform.currentData() not in ("douyin", "buyin"):
@@ -771,6 +807,11 @@ class Console(QMainWindow):
         if self._closing:
             self.bridge.stop()
             QApplication.quit()
+        elif self._pending_platform:
+            platform = self._pending_platform
+            self._pending_platform = None
+            self.platform.setCurrentIndex(self.platform.findData(platform))
+            QTimer.singleShot(0, self._start_connection)
         elif self._pending_account_id:
             account_id = self._pending_account_id
             self._pending_account_id = None

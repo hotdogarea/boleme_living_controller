@@ -10,6 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 class Bridge(QObject):
     send_requested = pyqtSignal(dict)
+    platform_requested = pyqtSignal(str)
     status_changed = pyqtSignal(str)
 
     def __init__(self, token: str, port: int = 21341, parent=None):
@@ -21,6 +22,7 @@ class Bridge(QObject):
         self._lock = threading.Lock()
         self._thread = None
         self._platform_status = "未连接平台"
+        self.platform = ""
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -49,7 +51,8 @@ class Bridge(QObject):
             with self._lock:
                 self._clients.add(pending)
             socket.send(json.dumps({"type": "ready", "version": 1}, ensure_ascii=False))
-            socket.send(json.dumps({"type": "platform_status", "status": self._platform_status}, ensure_ascii=False))
+            socket.send(json.dumps({"type": "platform_status", "status": self._platform_status,
+                                    "platform": self.platform}, ensure_ascii=False))
             while not self._stop.is_set():
                 try:
                     while True:
@@ -71,6 +74,12 @@ class Bridge(QObject):
                         self.send_requested.emit(command)
                     else:
                         socket.send(json.dumps({"type": "error", "message": "invalid text"}))
+                elif command.get("type") == "select_platform":
+                    platform = command.get("platform")
+                    if platform in {"douyin", "buyin", "xiaohongshu", "xiaohongshu_pgy", "wechat", "taobao"}:
+                        self.platform_requested.emit(platform)
+                    else:
+                        socket.send(json.dumps({"type": "error", "message": "invalid platform"}))
         except Exception:
             pass
         finally:
@@ -83,7 +92,8 @@ class Bridge(QObject):
 
     def broadcast_status(self, status: str):
         self._platform_status = status
-        self._broadcast_payload(json.dumps({"type": "platform_status", "status": status}, ensure_ascii=False))
+        self._broadcast_payload(json.dumps({"type": "platform_status", "status": status,
+                                            "platform": self.platform}, ensure_ascii=False))
 
     def _broadcast_payload(self, payload: str):
         with self._lock:
