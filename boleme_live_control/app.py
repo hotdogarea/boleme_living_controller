@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, Qt, QTimer
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
     QDialog, QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
@@ -42,6 +42,8 @@ QLabel#version { color: #9cabaa; font-size: 12px; }
 QLabel#pageTitle { font-size: 17px; font-weight: 600; }
 QLabel#muted, QLabel#capability { color: #9cabaa; }
 QLabel#productHint { color: #9cabaa; padding: 0 0 2px 0; }
+QLabel#productState { color: #9cabaa; min-width: 44px; }
+QLabel#productState[running="true"] { color: #8bd3bf; }
 QLabel#status { color: #d19f86; font-weight: 600; }
 QLabel#status[connected="true"] { color: #8bd3bf; }
 QPushButton { background: #293337; border: 1px solid #435256; border-radius: 4px; padding: 7px 13px; min-height: 19px; }
@@ -79,6 +81,27 @@ def _table(columns, stretch=0):
     table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     table.setAlternatingRowColors(True)
     return table
+
+
+class ToggleSwitch(QCheckBox):
+    def __init__(self, accessible_name, parent=None):
+        super().__init__(parent)
+        self.setAccessibleName(accessible_name)
+        self.setFixedSize(48, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#2d786a" if self.isChecked() else "#435256"))
+        painter.drawRoundedRect(1, 2, 46, 22, 11, 11)
+        painter.setBrush(QColor("#f4faf7"))
+        painter.drawEllipse(26 if self.isChecked() else 4, 4, 18, 18)
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QColor("#8bd3bf"))
+            painter.drawRoundedRect(0, 1, 47, 24, 12, 12)
 
 
 class Console(QMainWindow):
@@ -264,10 +287,16 @@ class Console(QMainWindow):
         product_title.setObjectName("pageTitle")
         product_header.addWidget(product_title)
         product_header.addStretch()
-        self.product_enabled = QCheckBox("自动弹讲解")
-        self.product_enabled.setToolTip("按序号依次讲解，重复次数完成后切到下一项。连接中控台后可开启。")
+        product_toggle_label = QLabel("自动讲解")
+        product_header.addWidget(product_toggle_label)
+        self.product_enabled = ToggleSwitch("自动讲解开关")
+        self.product_enabled.setToolTip("启动自动讲解；需先连接中控台")
         self.product_enabled.toggled.connect(self._toggle_products)
         product_header.addWidget(self.product_enabled)
+        self.product_state = QLabel("已停止")
+        self.product_state.setObjectName("productState")
+        self.product_state.setProperty("running", False)
+        product_header.addWidget(self.product_state)
         product_layout.addLayout(product_header)
         product_hint = QLabel("单品只需保留一条；商品序号对应中控台编号，点击表格中的数字可修改。")
         product_hint.setObjectName("productHint")
@@ -894,7 +923,11 @@ class Console(QMainWindow):
 
     def _toggle_products(self, enabled):
         if not enabled:
+            was_running = self.product_schedule is not None
             self.product_schedule = None
+            self._set_product_state(False)
+            if was_running:
+                self._log("已停止自动讲解")
             return
         try:
             items = [Product(int(number), int(repeats), int(interval)) for number, repeats, interval in self._rows(self.products)]
@@ -902,11 +935,22 @@ class Console(QMainWindow):
                 raise ValueError("商品序号、重复次数和间隔都必须大于 0")
             if not self.connected:
                 raise ValueError("请先连接中控台")
+            if not self._save():
+                self.product_enabled.setChecked(False)
+                return
             self.product_schedule = SequenceScheduler(items)
-            self._save()
+            self._set_product_state(True)
+            self._log("已启动自动讲解")
         except ValueError as exc:
             QMessageBox.warning(self, "商品讲解", str(exc))
             self.product_enabled.setChecked(False)
+
+    def _set_product_state(self, running):
+        self.product_state.setText("运行中" if running else "已停止")
+        self.product_state.setProperty("running", running)
+        self.product_state.style().unpolish(self.product_state)
+        self.product_state.style().polish(self.product_state)
+        self.product_enabled.setToolTip("停止自动讲解" if running else "启动自动讲解；需先连接中控台")
 
     def _tick(self):
         if not self.connected or not self.worker:
