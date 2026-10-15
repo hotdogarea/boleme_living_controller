@@ -9,6 +9,11 @@ if ($Name -notmatch '^BolemeLiveControl(?:-[A-Za-z0-9-]+)?$') {
 }
 if (-not $Python) { $Python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe" }
 $entry = Join-Path $PSScriptRoot "run.py"
+$icon = Join-Path $PSScriptRoot "assets\boleme.ico"
+$image = Join-Path $PSScriptRoot "assets\boleme.png"
+if (-not (Test-Path -LiteralPath $icon) -or -not (Test-Path -LiteralPath $image)) {
+    throw "Missing brand icon assets; run scripts/render_icon.py first."
+}
 $dist = Join-Path $PSScriptRoot "dist\$Name"
 if (Test-Path -LiteralPath $dist) {
     if (-not $ReplaceExisting) {
@@ -29,8 +34,9 @@ if (Test-Path -LiteralPath $dist) {
     }
 }
 & $Python -m PyInstaller --noconfirm --onedir --windowed --name $Name `
-    --paths $PSScriptRoot --collect-all playwright `
+    --paths $PSScriptRoot --collect-all playwright --icon $icon `
     --hidden-import websockets.sync.server `
+    --add-data "${image};assets" `
     --add-data "$(Join-Path $PSScriptRoot 'LICENSE');." `
     --add-data "$(Join-Path $PSScriptRoot 'THIRD_PARTY_LICENSE.txt');." `
     --distpath (Join-Path $PSScriptRoot "dist") `

@@ -5,9 +5,10 @@ import sys
 from copy import deepcopy
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
     QDialog, QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
@@ -25,12 +26,19 @@ from .storage import (
     save_settings, selected_account,
 )
 from .voice_protocol import to_voice_event
+from . import __version__
+
+
+def _brand_icon_path() -> Path:
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return root / "assets" / "boleme.png"
 
 
 STYLE = """
 QWidget { background: #181d20; color: #e8efed; font-size: 13px; }
 QMainWindow { background: #181d20; }
 QLabel#title { font-size: 18px; font-weight: 600; }
+QLabel#version { color: #9cabaa; font-size: 12px; }
 QLabel#pageTitle { font-size: 17px; font-weight: 600; }
 QLabel#muted, QLabel#capability { color: #9cabaa; }
 QLabel#productHint { color: #9cabaa; padding: 0 0 2px 0; }
@@ -89,7 +97,8 @@ class Console(QMainWindow):
         self._raw_events = {}
         self._event_count = 0
         self._selected_msg_id = ""
-        self.setWindowTitle("播了么直播中控助手")
+        self.setWindowTitle(f"播了么直播中控助手 v{__version__}")
+        self.setWindowIcon(QIcon(str(_brand_icon_path())))
         self.resize(1100, 710)
         self.setMinimumSize(900, 590)
         self.setStyleSheet(STYLE)
@@ -118,10 +127,19 @@ class Console(QMainWindow):
         root.setSpacing(10)
 
         header = QHBoxLayout()
+        icon = QLabel()
+        icon.setFixedSize(28, 28)
+        icon.setPixmap(QPixmap(str(_brand_icon_path())).scaled(
+            28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+        header.addWidget(icon)
         title = QLabel("播了么")
         title.setObjectName("title")
         title.setToolTip("播了么直播中控助手")
         header.addWidget(title)
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("version")
+        header.addWidget(version)
         header.addStretch()
         self.platform = QComboBox()
         for spec in PLATFORMS.values():
@@ -596,10 +614,9 @@ class Console(QMainWindow):
             except ValueError as exc:
                 QMessageBox.warning(dialog, "修改备注", str(exc))
                 return
-            self._refresh_accounts(account_id if self.account.currentData() == account_id else None)
-            if not self._save():
+            if not self._save(expected_account=(platform, account_id, name.strip())):
                 rename_account(self.settings, platform, account_id, old_name)
-                self._refresh_accounts()
+            self._refresh_accounts()
             refresh(account_id)
 
         def remove():
@@ -697,17 +714,26 @@ class Console(QMainWindow):
         return [[(table.item(row, column).text() if table.item(row, column) else "").strip()
                  for column in range(table.columnCount())] for row in range(table.rowCount())]
 
-    def _save(self):
+    def _save(self, *, expected_account=None):
         platform = self.platform.currentData()
         self.settings.update({"platform": platform, "phrases": self._rows(self.phrases), "products": self._rows(self.products)})
         self.settings.setdefault("selected_accounts", {})[platform] = self.account.currentData()
         try:
             save_settings(self.settings)
+            if expected_account is not None:
+                platform_key, account_id, expected_name = expected_account
+                saved_name = next((row["name"] for row in accounts_for(load_settings(), platform_key)
+                                   if row["id"] == account_id), None)
+                if saved_name != expected_name:
+                    raise OSError("账号备注未能从配置文件中恢复")
         except (OSError, TypeError, ValueError) as exc:
             self._log(f"设置保存失败: {exc}")
             QMessageBox.warning(self, "保存失败", f"账号和设置未能保存，请检查磁盘或目录权限。\n{exc}")
             return False
-        self._log("设置已保存")
+        if expected_account is not None:
+            self._log(f"账号备注已保存到本机（{PLATFORMS[expected_account[0]].name}）")
+        else:
+            self._log("设置已保存")
         return True
 
     def _log(self, text):
@@ -914,6 +940,7 @@ class Console(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(_brand_icon_path())))
     app.setQuitOnLastWindowClosed(False)
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
