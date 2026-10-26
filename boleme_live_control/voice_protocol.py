@@ -10,7 +10,8 @@ VOICE_PLATFORMS = {
     "kuaishou": "kuaishou",
     "taobao": "taobao",
 }
-VOICE_TYPES = {"comment", "enter", "like", "follow", "gift"}
+VOICE_TYPES = {"comment", "enter", "like", "follow", "gift",
+               "subscribe_merchant_brand_vip", "ecom_fansclub_participate", "live_order"}
 
 
 def to_voice_event(event: dict) -> dict | None:
@@ -42,4 +43,8 @@ def to_voice_event(event: dict) -> dict | None:
     }
     if kind == "gift":
         result["gift_name"] = content
+    if kind == "live_order" and isinstance(event.get("order"), dict):
+        order = event["order"]
+        result["order"] = {key: order.get(key) for key in (
+            "status", "status_code", "product_id", "product_title", "order_ts")}
     return result

@@ -108,6 +108,8 @@ class BrowserWorker(QThread):
                 endpoint = "中控评论"
             elif "message?" in url and host == "compass.jinritemai.com":
                 endpoint = "罗盘消息"
+            elif "live_order_stream?" in url and host == "compass.jinritemai.com":
+                endpoint = "罗盘订单"
         elif self.spec.capture == "wechat" and "micro/live/cgi-bin/mmfinderassistant-bin/live/msg?" in url:
             endpoint = "视频号消息"
         elif self.spec.capture == "taobao" and "mtop.taobao.iliad.comment.query.anchorlatest/3.0" in url:

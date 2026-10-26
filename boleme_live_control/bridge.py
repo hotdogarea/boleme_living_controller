@@ -26,6 +26,7 @@ class Bridge(QObject):
         self.session_id = ""
         self.account_id = ""
         self.ready = False
+        self.capture_state = "idle"
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -93,8 +94,10 @@ class Bridge(QObject):
         payload = json.dumps({"type": "barrage", "event": event}, ensure_ascii=False)
         self._broadcast_payload(payload, barrage=True)
 
-    def broadcast_status(self, status: str):
+    def broadcast_status(self, status: str, capture_state=None):
         self._platform_status = status
+        if capture_state is not None:
+            self.capture_state = capture_state
         self._broadcast_payload(self._status_payload())
 
     def _status_payload(self):
@@ -102,6 +105,7 @@ class Bridge(QObject):
             "type": "platform_status", "status": self._platform_status,
             "platform": self.platform, "session_id": self.session_id,
             "account_id": self.account_id, "ready": self.ready,
+            "capture_state": self.capture_state,
         }, ensure_ascii=False)
 
     def _broadcast_payload(self, payload: str, barrage=False):

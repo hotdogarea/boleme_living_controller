@@ -1,6 +1,10 @@
 """Supported event selection, shared by the console display and local bridge."""
 
-TYPE_LABELS = {"comment": "评论", "enter": "进房", "like": "点赞", "follow": "关注"}
+TYPE_LABELS = {
+    "comment": "评论", "enter": "进房", "like": "点赞", "follow": "关注",
+    "subscribe_merchant_brand_vip": "加入品牌会员",
+    "ecom_fansclub_participate": "加入粉丝团", "live_order": "订单",
+}
 
 
 def available_capture_types(capture):

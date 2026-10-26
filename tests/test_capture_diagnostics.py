@@ -7,6 +7,20 @@ from boleme_live_control.browser_worker import BrowserWorker
 
 
 class CaptureDiagnosticsTests(unittest.TestCase):
+    def test_order_response_reaches_publisher_and_duplicate_is_dropped(self):
+        worker = BrowserWorker("buyin", Path(tempfile.gettempdir()))
+        events = []
+        worker.event_received.connect(events.append)
+        response = Mock(url="https://compass.jinritemai.com/api/live_order_stream?x=1")
+        response.json.return_value = {"data": [{"order_id": "o1", "order_status": 0,
+                                    "nick_name": "观众", "product_title": "大米"}]}
+        worker._response(response)
+        worker._response(response)
+        response.json.return_value["data"][0]["order_status"] = 3
+        worker._response(response)
+        self.assertEqual([event["msg_id"] for event in events], ["o1#0", "o1#3"])
+        self.assertTrue(all(event["session_id"] == worker.session_id for event in events))
+
     def test_optional_comment_error_does_not_mark_capture_failed(self):
         worker = BrowserWorker("buyin", Path(tempfile.gettempdir()))
         notices, failures, events = [], [], []

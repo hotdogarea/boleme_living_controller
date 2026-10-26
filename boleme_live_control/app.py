@@ -370,7 +370,7 @@ class Console(QMainWindow):
     def _flush_barrage(self):
         if not self._pending_events:
             return
-        names = {"comment": "评论", "enter": "进房", "like": "点赞", "follow": "关注", "gift": "礼物"}
+        names = {**TYPE_LABELS, "gift": "礼物"}
         self.barrage.setUpdatesEnabled(False)
         try:
             for _ in range(min(60, len(self._pending_events))):
@@ -516,8 +516,11 @@ class Console(QMainWindow):
         available = available_capture_types(PLATFORMS[self.platform.currentData()].capture)
         selected = self._selected_capture_types()
         label = " / ".join(TYPE_LABELS[kind] for kind in selected) or "未选择"
+        self.capability.setToolTip(label if available else "暂不支持弹幕")
         if len(available) > 1 and selected == available:
             label = "全部"
+        elif len(selected) > 2:
+            label = f"已选 {len(selected)} 类"
         self.capability.setText(f"采集类型：{label}" if available else "暂不支持弹幕")
 
     def _capture_types_changed(self, _checked):
@@ -872,7 +875,7 @@ class Console(QMainWindow):
         self.worker.finished.connect(self._worker_finished)
         self.worker.start()
         self._log("正在启动浏览器")
-        self.bridge.broadcast_status("正在启动浏览器")
+        self.bridge.broadcast_status("正在启动浏览器", capture_state="starting")
 
     def _worker_state(self, text):
         self.connected = "已就绪" in text or "监听中" in text
@@ -886,7 +889,15 @@ class Console(QMainWindow):
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
         self._log(text)
-        self.bridge.broadcast_status(text)
+        switching = self._pending_platform or self._pending_account_id
+        stopped = "已关闭" in text or text == "已停止"
+        if switching:
+            capture_state = "switching"
+        elif stopped:
+            capture_state = "stopped"
+        else:
+            capture_state = "running" if self.connected else "starting"
+        self.bridge.broadcast_status(text, capture_state=capture_state)
 
     def _worker_finished(self):
         self.connected = False
@@ -904,7 +915,8 @@ class Console(QMainWindow):
         self.state.setProperty("connected", False)
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
-        self.bridge.broadcast_status("未连接平台")
+        switching = self._pending_platform or self._pending_account_id
+        self.bridge.broadcast_status("未连接平台", capture_state="switching" if switching else "stopped")
         if self._closing:
             self.bridge.stop()
             QApplication.quit()
@@ -1035,6 +1047,8 @@ class Console(QMainWindow):
 
     def closeEvent(self, event):
         self._save()
+        self.bridge.ready = False
+        self.bridge.broadcast_status("中控助手已关闭", capture_state="stopped")
         self.timer.stop()
         self.barrage_timer.stop()
         if self.worker and self.worker.isRunning():

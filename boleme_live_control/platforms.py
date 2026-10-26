@@ -62,9 +62,30 @@ def parse_response(platform: str, url: str, body: Any) -> list[dict]:
                 result.append(_event(platform, "comment", msg, text=msg.get("content"), nick=msg.get("nick_name"), user_id=msg.get("user_id"), msg_id=msg.get("comment_id")))
         elif "message?" in url and "compass.jinritemai.com" in url:
             for kind, messages in ((body.get("data") or {}).get("messages") or {}).items():
-                mapped = {"room_enter": "enter", "room_like": "like", "room_follow": "follow"}.get(kind, kind)
                 for msg in messages or []:
+                    source_kind = msg.get("msg_type") or kind
+                    mapped = {"room_enter": "enter", "room_like": "like", "room_follow": "follow"}.get(source_kind, source_kind)
                     result.append(_event(platform, mapped, msg, text=msg.get("content"), nick=msg.get("nick_name"), user_id=msg.get("user_id"), msg_id=msg.get("msg_id")))
+        elif "live_order_stream?" in url and "compass.jinritemai.com" in url:
+            for msg in body.get("data") or []:
+                code = msg.get("order_status")
+                status = "未知状态"
+                if isinstance(code, (int, float)) and not isinstance(code, bool):
+                    if code <= 1:
+                        status = "已下单"
+                    elif code == 3:
+                        status = "已付款"
+                title = str(msg.get("product_title") or "")
+                event = _event(platform, "live_order", msg,
+                               text=f"{status}：{title}" if title else status,
+                               nick=msg.get("nick_name"), user_id=msg.get("user_id"),
+                               msg_id=f"{msg['order_id']}#{code}" if msg.get("order_id") else "")
+                event["order"] = {
+                    "status": status, "status_code": code,
+                    "product_id": str(msg.get("product_id") or ""),
+                    "product_title": title, "order_ts": msg.get("order_ts"),
+                }
+                result.append(event)
     elif platform == "wechat" and "micro/live/cgi-bin/mmfinderassistant-bin/live/msg?" in url:
         if body.get("errCode") == 0:
             for msg in (body.get("data") or {}).get("msgList") or []:

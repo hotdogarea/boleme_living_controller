@@ -33,7 +33,9 @@ class CaptureTypeTests(unittest.TestCase):
                 "nickname": "观众", "msg_id": kind, **values}
 
     def test_defaults_match_actual_platform_capabilities(self):
-        self.assertEqual(available_capture_types("douyin"), ("comment", "enter", "like", "follow"))
+        self.assertEqual(available_capture_types("douyin"), (
+            "comment", "enter", "like", "follow", "subscribe_merchant_brand_vip",
+            "ecom_fansclub_participate", "live_order"))
         self.assertEqual(available_capture_types("wechat"), ("comment",))
         self.assertEqual(available_capture_types("none"), ())
         self.assertEqual(selected_capture_types({"capture_types": "old invalid value"}, "douyin"), available_capture_types("douyin"))
@@ -50,6 +52,8 @@ class CaptureTypeTests(unittest.TestCase):
 
     def test_changes_are_saved_and_shared_by_douyin_backends(self):
         self.window._capture_type_actions["like"].setChecked(False)
+        self.assertEqual(self.window.capability.text(), "采集类型：已选 6 类")
+        self.assertIn("加入品牌会员", self.window.capability.toolTip())
         self.assertNotIn("like", load_settings()["capture_types"]["douyin"])
         self.window.platform.setCurrentIndex(self.window.platform.findData("buyin"))
         self.assertFalse(self.window._capture_type_actions["like"].isChecked())
@@ -97,6 +101,29 @@ class CaptureTypeTests(unittest.TestCase):
         self.window.platform.setCurrentIndex(self.window.platform.findData("douyin_eos"))
         self.assertFalse(self.window.capability.isEnabled())
         self.assertEqual(self.window._capture_type_actions, {})
+
+    def test_oba_extra_types_are_displayed_and_forwarded(self):
+        for kind, label in (("subscribe_merchant_brand_vip", "加入品牌会员"),
+                            ("ecom_fansclub_participate", "加入粉丝团"), ("live_order", "订单")):
+            self.window._event(self.event(kind))
+            self.window._flush_barrage()
+            row = self.window.barrage.rowCount() - 1
+            self.assertEqual(self.window.barrage.item(row, 3).text(), label)
+            self.assertEqual(self.bridge.broadcast.call_args.args[0]["type"], kind)
+            self.window._capture_type_actions[kind].setChecked(False)
+            self.bridge.broadcast.reset_mock()
+            self.window._event(self.event(kind))
+            self.bridge.broadcast.assert_not_called()
+
+    def test_browser_completion_reports_stop_but_account_switch_does_not(self):
+        self.window._worker_state("浏览器已关闭，采集停止")
+        self.assertEqual(self.bridge.broadcast_status.call_args.kwargs["capture_state"], "stopped")
+        self.window._pending_account_id = "next-account"
+        self.window._worker_state("已停止")
+        self.assertEqual(self.bridge.broadcast_status.call_args.kwargs["capture_state"], "switching")
+        self.window._pending_account_id = None
+        self.window._worker_finished()
+        self.assertEqual(self.bridge.broadcast_status.call_args.kwargs["capture_state"], "stopped")
 
 
 if __name__ == "__main__":
