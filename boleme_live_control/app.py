@@ -12,12 +12,13 @@ from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
     QDialog, QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidget,
+    QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidget, QMenu, QToolButton,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .bridge import Bridge
 from .browser_worker import BrowserWorker
+from .capture_types import TYPE_LABELS, available_capture_types, selected_capture_types
 from .platforms import PLATFORMS
 from .scheduler import Phrase, Product, SequenceScheduler
 from .storage import (
@@ -41,6 +42,10 @@ QLabel#title { font-size: 18px; font-weight: 600; }
 QLabel#version { color: #9cabaa; font-size: 12px; }
 QLabel#pageTitle { font-size: 17px; font-weight: 600; }
 QLabel#muted, QLabel#capability { color: #9cabaa; }
+QToolButton#capability { color: #9cabaa; border: 1px solid #3a4a4e; border-radius: 4px; padding: 5px 10px; }
+QMenu { background: #20292d; color: #e4eeee; border: 1px solid #3a4a4e; }
+QMenu::item { padding: 6px 24px; }
+QMenu::item:selected { background: #326d64; }
 QLabel#productHint { color: #9cabaa; padding: 0 0 2px 0; }
 QLabel#productState { color: #9cabaa; min-width: 44px; }
 QLabel#productState[running="true"] { color: #8bd3bf; }
@@ -210,8 +215,13 @@ class Console(QMainWindow):
         live_title.setObjectName("pageTitle")
         live_header.addWidget(live_title)
         live_header.addStretch()
-        self.capability = QLabel()
+        self.capability = QToolButton()
         self.capability.setObjectName("capability")
+        self.capability.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.capability.setToolTip("勾选需要显示并推送到语音引擎的弹幕类型，修改后自动保存。")
+        self.capture_type_menu = QMenu(self.capability)
+        self.capability.setMenu(self.capture_type_menu)
+        self._capture_type_actions = {}
         live_header.addWidget(self.capability)
         self.only_pending = QCheckBox("只看未发送")
         self.only_pending.toggled.connect(self._filter_barrage)
@@ -365,6 +375,8 @@ class Console(QMainWindow):
         try:
             for _ in range(min(60, len(self._pending_events))):
                 event = self._pending_events.popleft()
+                if event.get("type") not in self._selected_capture_types():
+                    continue
                 if self.barrage.rowCount() >= 500:
                     first = self.barrage.item(0, 0)
                     if first:
@@ -404,9 +416,13 @@ class Console(QMainWindow):
             self.barrage.setUpdatesEnabled(True)
 
     def _filter_barrage(self, enabled):
+        selected = self._selected_capture_types()
         for row in range(self.barrage.rowCount()):
             status = self.barrage.item(row, 4)
-            self.barrage.setRowHidden(row, enabled and (not status or status.text() not in ("待发送", "发送失败")))
+            item = self.barrage.item(row, 0)
+            event = self._raw_events.get(item.data(Qt.ItemDataRole.UserRole), {}) if item else {}
+            hidden = event.get("type") not in selected or (enabled and (not status or status.text() not in ("待发送", "发送失败")))
+            self.barrage.setRowHidden(row, hidden)
 
     def _barrage_cell_clicked(self, row, column):
         if column != 5 or self.barrage.item(row, 5).text() != "发文字":
@@ -424,7 +440,7 @@ class Console(QMainWindow):
             item = self.barrage.item(row, 0)
             if item and item.data(Qt.ItemDataRole.UserRole + 1) == msg_id:
                 self.barrage.item(row, 4).setText(status)
-                self.barrage.setRowHidden(row, self.only_pending.isChecked() and status not in ("待发送", "发送失败"))
+                self._filter_barrage(self.only_pending.isChecked())
                 break
 
     def _show_fields(self):
@@ -475,9 +491,57 @@ class Console(QMainWindow):
         spec = PLATFORMS[self.platform.currentData()]
         if hasattr(self, 'bridge'):
             self.bridge.platform = spec.key
-        capture = "评论 / 进房 / 点赞 / 关注" if spec.capture == "douyin" else "评论" if spec.capture != "none" else "暂不支持弹幕"
-        self.capability.setText(f"采集：{capture}")
+        self._refresh_capture_types()
         self._refresh_accounts()
+
+    def _selected_capture_types(self):
+        return selected_capture_types(self.settings, PLATFORMS[self.platform.currentData()].capture)
+
+    def _refresh_capture_types(self):
+        capture = PLATFORMS[self.platform.currentData()].capture
+        available = available_capture_types(capture)
+        selected = self._selected_capture_types()
+        self.capture_type_menu.clear()
+        self._capture_type_actions = {}
+        for kind in available:
+            action = self.capture_type_menu.addAction(TYPE_LABELS[kind])
+            action.setCheckable(True)
+            action.setChecked(kind in selected)
+            action.toggled.connect(self._capture_types_changed)
+            self._capture_type_actions[kind] = action
+        self.capability.setEnabled(bool(available))
+        self._update_capture_types_label()
+
+    def _update_capture_types_label(self):
+        available = available_capture_types(PLATFORMS[self.platform.currentData()].capture)
+        selected = self._selected_capture_types()
+        label = " / ".join(TYPE_LABELS[kind] for kind in selected) or "未选择"
+        if len(available) > 1 and selected == available:
+            label = "全部"
+        self.capability.setText(f"采集类型：{label}" if available else "暂不支持弹幕")
+
+    def _capture_types_changed(self, _checked):
+        capture = PLATFORMS[self.platform.currentData()].capture
+        candidate = deepcopy(self.settings)
+        if not isinstance(candidate.get("capture_types"), dict):
+            candidate["capture_types"] = {}
+        candidate["capture_types"][capture] = [kind for kind, action in self._capture_type_actions.items() if action.isChecked()]
+        try:
+            save_settings(candidate)
+        except (OSError, TypeError, ValueError) as exc:
+            selected = self._selected_capture_types()
+            for kind, action in self._capture_type_actions.items():
+                blocked = action.blockSignals(True)
+                action.setChecked(kind in selected)
+                action.blockSignals(blocked)
+            self._log(f"弹幕类型保存失败: {exc}")
+            return
+        self.settings = candidate
+        self._update_capture_types_label()
+        selected = self._selected_capture_types()
+        self._pending_events = deque((event for event in self._pending_events if event.get("type") in selected), maxlen=2000)
+        self._filter_barrage(self.only_pending.isChecked())
+        self._log("弹幕采集类型已自动保存")
 
     def _bridge_select_platform(self, platform):
         index = self.platform.findData(platform)
@@ -857,6 +921,8 @@ class Console(QMainWindow):
 
     def _event(self, event):
         if not isinstance(event, dict):
+            return
+        if event.get("type") not in self._selected_capture_types():
             return
         if not self._event_count and not self._pending_events:
             self._log("已收到首条弹幕")
