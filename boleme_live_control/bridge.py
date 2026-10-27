@@ -54,7 +54,8 @@ class Bridge(QObject):
                 return
             with self._lock:
                 self._clients[pending] = hello.get("subscribe_barrage") is not False
-            socket.send(json.dumps({"type": "ready", "version": 1}, ensure_ascii=False))
+            socket.send(json.dumps({"type": "ready", "version": 1,
+                                    "capabilities": ["voice_reply_types_v1"]}, ensure_ascii=False))
             socket.send(self._status_payload())
             while not self._stop.is_set():
                 try:
@@ -74,6 +75,11 @@ class Bridge(QObject):
                             and isinstance(msg_id, str) and len(msg_id) <= 200
                             and isinstance(command.get("session_id"), str) and command["session_id"]
                             and isinstance(command.get("platform"), str) and command["platform"]
+                            and isinstance(command.get("event_type", "comment"), str)
+                            and command.get("event_type", "comment") in {"comment", "live_order"}
+                            and isinstance(command.get("event_id", ""), str)
+                            and len(command.get("event_id", "")) <= 200
+                            and (command.get("event_type") != "live_order" or command.get("event_id"))
                             and (command["type"] != "send_public_text" or not msg_id)):
                         self.send_requested.emit(command)
                     else:

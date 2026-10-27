@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from .bridge import Bridge
 from .browser_worker import BrowserWorker
 from .capture_types import TYPE_LABELS, available_capture_types, selected_capture_types
+from .voice_reply_policy import VoiceReplyPolicy, VOICE_REPLY_TYPES, selected_voice_reply_types
 from .platforms import PLATFORMS
 from .scheduler import Phrase, Product, SequenceScheduler
 from .storage import (
@@ -125,6 +126,7 @@ class Console(QMainWindow):
         self._raw_events = {}
         self._event_count = 0
         self._selected_msg_id = ""
+        self.voice_reply_policy = VoiceReplyPolicy()
         self.setWindowTitle(f"播了么直播中控助手 v{__version__}")
         self.setWindowIcon(QIcon(str(_brand_icon_path())))
         self.resize(1100, 710)
@@ -243,6 +245,22 @@ class Console(QMainWindow):
         self.barrage.setColumnWidth(5, 85)
         self.barrage.cellClicked.connect(self._barrage_cell_clicked)
         live_layout.addWidget(self.barrage, 1)
+        voice_sync_row = QHBoxLayout()
+        voice_sync_row.addWidget(QLabel("语音文案自动发公屏"))
+        self.voice_reply_checks = {}
+        for kind, label in VOICE_REPLY_TYPES.items():
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(kind in selected_voice_reply_types(self.settings))
+            checkbox.setToolTip("仅发送语音引擎已经生成的文案，不再次查询知识库。" if kind == "comment" else
+                                "同一订单最多感谢一次；与其他文字间隔至少30秒，繁忙时跳过，不积压补发。")
+            checkbox.toggled.connect(self._voice_reply_types_changed)
+            self.voice_reply_checks[kind] = checkbox
+            voice_sync_row.addWidget(checkbox)
+        voice_sync_row.addStretch()
+        order_hint = QLabel("订单：同单一次，间隔至少30秒")
+        order_hint.setObjectName("muted")
+        voice_sync_row.addWidget(order_hint)
+        live_layout.addLayout(voice_sync_row)
         send_row = QHBoxLayout()
         send_row.addWidget(QLabel("公开发言"))
         self.reply_context = QLabel("公开发言")
@@ -489,6 +507,9 @@ class Console(QMainWindow):
 
     def _platform_changed(self):
         spec = PLATFORMS[self.platform.currentData()]
+        order_checkbox = getattr(self, "voice_reply_checks", {}).get("live_order")
+        if order_checkbox:
+            order_checkbox.setEnabled(spec.capture == "douyin")
         if hasattr(self, 'bridge'):
             self.bridge.platform = spec.key
         self._refresh_capture_types()
@@ -951,6 +972,8 @@ class Console(QMainWindow):
 
     def _action_started(self, action):
         self._worker_busy = True
+        if action == "send":
+            self.voice_reply_policy.touch_activity()
         self._log("正在发送文字" if action == "send" else "正在弹商品讲解" if action == "popup" else f"正在执行 {action}")
 
     def _reply_result(self, msg_id, success):
@@ -976,12 +999,38 @@ class Console(QMainWindow):
                 and command.get("session_id") == self.worker.session_id):
             msg_id = str(command.get("msg_id") or "")
             if command.get("type") == "send_public_text":
+                reason = self.voice_reply_policy.check(
+                    command, selected_voice_reply_types(self.settings), self.account.currentData())
+                commands = getattr(self.worker, "commands", None)
+                if (command.get("event_type") == "live_order"
+                        and (self._worker_busy or (commands is not None and not commands.empty()))):
+                    reason = "中控操作繁忙，订单感谢已跳过，不排队补发"
+                if reason:
+                    self._log(f"文字同步已跳过：{reason}")
+                    return
                 if self.worker.command("send", command["text"]):
+                    self.voice_reply_policy.record(command, self.account.currentData())
                     self._log("语音引擎的公开文字已提交发送")
             elif self.worker.command("send", {"text": command["text"], "msg_id": msg_id}):
                 self._mark_reply(msg_id, "发送中")
         else:
             self._log("已忽略过期或跨平台的文字回发")
+
+    def _voice_reply_types_changed(self, _checked):
+        candidate = deepcopy(self.settings)
+        candidate["voice_reply_types"] = [kind for kind, checkbox in self.voice_reply_checks.items()
+                                          if checkbox.isChecked()]
+        try:
+            save_settings(candidate)
+        except (OSError, TypeError, ValueError) as exc:
+            for kind, checkbox in self.voice_reply_checks.items():
+                blocked = checkbox.blockSignals(True)
+                checkbox.setChecked(kind in selected_voice_reply_types(self.settings))
+                checkbox.blockSignals(blocked)
+            self._log(f"文字同步设置保存失败：{exc}")
+            return
+        self.settings = candidate
+        self._log("文字同步类型已保存")
 
     def _toggle_phrases(self, enabled):
         if not enabled:

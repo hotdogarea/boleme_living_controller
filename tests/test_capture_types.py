@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -98,6 +99,7 @@ class CaptureTypeTests(unittest.TestCase):
     def test_other_platforms_only_offer_currently_supported_types(self):
         self.window.platform.setCurrentIndex(self.window.platform.findData("wechat"))
         self.assertEqual(set(self.window._capture_type_actions), {"comment"})
+        self.assertFalse(self.window.voice_reply_checks['live_order'].isEnabled())
         self.window.platform.setCurrentIndex(self.window.platform.findData("douyin_eos"))
         self.assertFalse(self.window.capability.isEnabled())
         self.assertEqual(self.window._capture_type_actions, {})
@@ -124,6 +126,54 @@ class CaptureTypeTests(unittest.TestCase):
         self.window._pending_account_id = None
         self.window._worker_finished()
         self.assertEqual(self.bridge.broadcast_status.call_args.kwargs["capture_state"], "stopped")
+
+    def test_voice_text_defaults_to_comments_and_selected_types_persist(self):
+        self.assertTrue(self.window.voice_reply_checks['comment'].isChecked())
+        self.assertFalse(self.window.voice_reply_checks['live_order'].isChecked())
+        self.window.voice_reply_checks['live_order'].setChecked(True)
+        self.window.voice_reply_checks['comment'].setChecked(False)
+        restarted = Console()
+        self.addCleanup(restarted.close)
+        self.assertFalse(restarted.voice_reply_checks['comment'].isChecked())
+        self.assertTrue(restarted.voice_reply_checks['live_order'].isChecked())
+
+    def test_voice_reply_selection_failure_restores_previous_checkbox(self):
+        with patch('boleme_live_control.app.save_settings', side_effect=OSError('read only')):
+            self.window.voice_reply_checks['live_order'].setChecked(True)
+        self.assertFalse(self.window.voice_reply_checks['live_order'].isChecked())
+
+    def test_order_text_is_opt_in_deduplicated_and_does_not_block_comments(self):
+        sent = []
+        self.window.worker = SimpleNamespace(session_id='s1', isRunning=lambda: False,
+            command=lambda *args: sent.append(args) or True)
+        self.window.connected = True
+        now = [0]
+        self.window.voice_reply_policy.clock = lambda: now[0]
+        command = {'type': 'send_public_text', 'platform': self.window.platform.currentData(),
+                   'session_id': 's1', 'event_type': 'live_order', 'event_id': 'o1#0', 'text': '谢谢支持'}
+        self.window._bridge_send(command)
+        self.assertEqual(sent, [])
+        self.window.voice_reply_checks['live_order'].setChecked(True)
+        self.window._bridge_send(command)
+        self.assertEqual(sent, [('send', '谢谢支持')])
+        now[0] = 100
+        self.window._bridge_send({**command, 'event_id': 'o1#3'})
+        self.assertEqual(len(sent), 1)
+        self.window._bridge_send({**command, 'event_type': 'comment', 'text': '知识库的原答案'})
+        self.assertEqual(sent[-1], ('send', '知识库的原答案'))
+        self.window._bridge_send({**command, 'event_id': 'o2#3'})
+        self.assertEqual(len(sent), 2)
+
+    def test_busy_worker_does_not_accumulate_order_thanks(self):
+        sent = []
+        self.window.worker = SimpleNamespace(session_id='s1', isRunning=lambda: False,
+            command=lambda *args: sent.append(args) or True)
+        self.window.connected = True
+        self.window._worker_busy = True
+        self.window.voice_reply_checks['live_order'].setChecked(True)
+        self.window._bridge_send({'type': 'send_public_text', 'platform': self.window.platform.currentData(),
+                   'session_id': 's1', 'event_type': 'live_order', 'event_id': 'o1#3', 'text': '谢谢'})
+        self.assertEqual(sent, [])
 
 
 if __name__ == "__main__":
