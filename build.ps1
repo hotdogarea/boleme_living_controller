@@ -37,6 +37,7 @@ if (Test-Path -LiteralPath $dist) {
     --paths $PSScriptRoot --collect-all playwright --icon $icon `
     --hidden-import websockets.sync.server `
     --add-data "${image};assets" `
+    --add-data "${icon};assets" `
     --add-data "$(Join-Path $PSScriptRoot 'LICENSE');." `
     --add-data "$(Join-Path $PSScriptRoot 'THIRD_PARTY_LICENSE.txt');." `
     --distpath (Join-Path $PSScriptRoot "dist") `

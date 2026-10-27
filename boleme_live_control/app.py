@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, Qt, QTimer
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
     QDialog, QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .bridge import Bridge
+from .branding import brand_asset, brand_icon, configure_taskbar_identity
 from .browser_worker import BrowserWorker
 from .capture_types import TYPE_LABELS, available_capture_types, selected_capture_types
 from .voice_reply_policy import VoiceReplyPolicy, VOICE_REPLY_TYPES, selected_voice_reply_types
@@ -32,8 +33,7 @@ from . import __version__
 
 
 def _brand_icon_path() -> Path:
-    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return root / "assets" / "boleme.png"
+    return brand_asset("boleme.png")
 
 
 STYLE = """
@@ -128,7 +128,7 @@ class Console(QMainWindow):
         self._selected_msg_id = ""
         self.voice_reply_policy = VoiceReplyPolicy()
         self.setWindowTitle(f"播了么直播中控助手 v{__version__}")
-        self.setWindowIcon(QIcon(str(_brand_icon_path())))
+        self.setWindowIcon(brand_icon())
         self.resize(1100, 710)
         self.setMinimumSize(900, 590)
         self.setStyleSheet(STYLE)
@@ -1107,8 +1107,10 @@ class Console(QMainWindow):
 
 
 def main():
+    configure_taskbar_identity()
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(str(_brand_icon_path())))
+    app.setApplicationName("播了么直播中控助手")
+    app.setWindowIcon(brand_icon())
     app.setQuitOnLastWindowClosed(False)
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
