@@ -220,7 +220,7 @@ class Console(QMainWindow):
         self.capability = QToolButton()
         self.capability.setObjectName("capability")
         self.capability.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.capability.setToolTip("勾选需要显示并推送到语音引擎的弹幕类型，修改后自动保存。")
+        self.capability.setToolTip("选择显示并推送到语音引擎的弹幕类型；公屏文字发送由下方“文字回复类型”单独控制。修改后自动保存。")
         self.capture_type_menu = QMenu(self.capability)
         self.capability.setMenu(self.capture_type_menu)
         self._capture_type_actions = {}
@@ -228,10 +228,6 @@ class Console(QMainWindow):
         self.only_pending = QCheckBox("只看未发送")
         self.only_pending.toggled.connect(self._filter_barrage)
         live_header.addWidget(self.only_pending)
-        fields = QPushButton("查看字段")
-        fields.setToolTip("查看选中弹幕的原始 JSON 字段，仅在本机显示。")
-        fields.clicked.connect(self._show_fields)
-        live_header.addWidget(fields)
         clear_barrage = QPushButton("清空")
         clear_barrage.clicked.connect(self._clear_barrage)
         live_header.addWidget(clear_barrage)
@@ -246,7 +242,7 @@ class Console(QMainWindow):
         self.barrage.cellClicked.connect(self._barrage_cell_clicked)
         live_layout.addWidget(self.barrage, 1)
         voice_sync_row = QHBoxLayout()
-        voice_sync_row.addWidget(QLabel("语音文案自动发公屏"))
+        voice_sync_row.addWidget(QLabel("文字回复类型"))
         self.voice_reply_checks = {}
         for kind, label in VOICE_REPLY_TYPES.items():
             checkbox = QCheckBox(label)
@@ -262,7 +258,6 @@ class Console(QMainWindow):
         voice_sync_row.addWidget(order_hint)
         live_layout.addLayout(voice_sync_row)
         send_row = QHBoxLayout()
-        send_row.addWidget(QLabel("公开发言"))
         self.reply_context = QLabel("公开发言")
         self.reply_context.setObjectName("muted")
         send_row.addWidget(self.reply_context)

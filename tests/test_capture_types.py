@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 from boleme_live_control.app import Console
 from boleme_live_control.capture_types import available_capture_types, selected_capture_types
 from boleme_live_control.storage import load_settings
@@ -174,6 +174,16 @@ class CaptureTypeTests(unittest.TestCase):
         self.window._bridge_send({'type': 'send_public_text', 'platform': self.window.platform.currentData(),
                    'session_id': 's1', 'event_type': 'live_order', 'event_id': 'o1#3', 'text': '谢谢'})
         self.assertEqual(sent, [])
+
+    def test_simplified_controls_and_independent_capture_and_reply_types(self):
+        self.assertNotIn('查看字段', [button.text() for button in self.window.findChildren(QPushButton)])
+        self.assertEqual(sum(label.text() == '公开发言' for label in self.window.findChildren(QLabel)), 1)
+        self.assertIn('文字回复类型', [label.text() for label in self.window.findChildren(QLabel)])
+        self.window.voice_reply_checks['comment'].setChecked(False)
+        self.assertTrue(self.window._capture_type_actions['comment'].isChecked())
+        self.window._capture_type_actions['enter'].setChecked(False)
+        self.assertFalse(self.window.voice_reply_checks['comment'].isChecked())
+        self.assertTrue(self.window._capture_type_actions['comment'].isChecked())
 
 
 if __name__ == "__main__":
