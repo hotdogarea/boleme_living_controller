@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .platforms import PLATFORMS, parse_kuaishou_message, parse_response, parse_xiaohongshu_frame
+from .idle_protection import IdleProtectionGuard
 
 
 class BrowserWorker(QThread):
@@ -45,6 +46,7 @@ class BrowserWorker(QThread):
         self._xhs_sessions = []
         self._capture_issue_times = {}
         self._comment_response_notice_reported = False
+        self._idle_protection = IdleProtectionGuard(self.capture_notice.emit)
 
     def command(self, action: str, value=None):
         try:
@@ -167,17 +169,58 @@ class BrowserWorker(QThread):
             raise ValueError("发送内容不能为空")
         if len(text) > 300:
             raise ValueError("发送内容过长")
+        self._ensure_control_clear(self.page)
         target = self.page.frame_locator(self.spec.iframe) if self.spec.iframe else self.page
         field = target.locator(self.spec.input).first
         field.fill(text.strip(), timeout=5000)
         button = self.page.locator(self.spec.submit).first
-        if button.count():
+        has_button = button.count() > 0
+        if has_button:
             if not button.is_visible() or "isDisabled" in (button.get_attribute("class") or ""):
                 raise RuntimeError("发送按钮不可用，请确认直播间和评论框状态")
-            button.click(timeout=5000)
-        else:
-            field.press("Enter", timeout=5000)
+            if self.spec.capture == "douyin":
+                # A trial is safe to retry: it checks obstruction without publishing.
+                try:
+                    button.click(trial=True, timeout=2000)
+                except Exception:
+                    if not self._idle_protection.restore(self.page):
+                        raise
+                    if field.input_value(timeout=1000) != text.strip():
+                        raise RuntimeError("恢复后评论框内容已变化，未自动重复发布，请重新确认内容")
+                    button.click(trial=True, timeout=2000)
+        # Response callbacks can arrive before click returns, including an ambiguous timeout.
         self._outgoing.append((text.strip(), time.monotonic()))
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        try:
+            if has_button:
+                button.click(timeout=5000)
+            else:
+                field.press("Enter", timeout=5000)
+        except PlaywrightTimeout as exc:
+            raise RuntimeError(f"发布结果未确认，未自动重发；请先核对公屏，避免重复发送。原始错误：{exc}") from exc
+
+    def _ensure_control_clear(self, page):
+        if self._stopping or self._browser_closed:
+            raise RuntimeError("中控正在停止，操作已取消")
+        if self.spec.capture == "douyin":
+            self._idle_protection.ensure_clear(page)
+
+    def _maintain_douyin_pages(self, pages):
+        if self.spec.capture != "douyin" or self._stopping:
+            return
+        try:
+            for page in pages:
+                self._idle_protection.restore(page)
+            if self._idle_protection.dialogs(self.page):
+                return
+            fresh = self.page.locator('[class^="newCommentLabel"]')
+            if fresh.count() and fresh.first.is_visible():
+                fresh.first.click(timeout=1000)
+        except Exception as exc:
+            now = time.monotonic()
+            if not self._browser_closed and now - self._capture_issue_times.get("page-maintenance", -60) >= 60:
+                self._capture_issue_times["page-maintenance"] = now
+                self.capture_notice.emit(f"提示 · 中控页面维护暂未完成（{type(exc).__name__}），采集进程继续运行")
 
     def _goods_page(self):
         if not self.spec.popup_page:
@@ -221,6 +264,7 @@ class BrowserWorker(QThread):
         if number < 1:
             raise ValueError("商品序号必须大于 0")
         page = self._goods_page()
+        self._ensure_control_clear(page)
         row = self._find_product(page, number)
         if self.spec.key == "taobao":
             button = row.locator(self.spec.popup).first
@@ -380,6 +424,7 @@ class BrowserWorker(QThread):
                         if self.spec.key == "taobao" and not taobao_entered:
                             taobao_entered = self._enter_taobao_control()
                         active = (taobao_entered if self.spec.key == "taobao" else self.page.locator(self.spec.ready).count() > 0)
+                        self._maintain_douyin_pages(pages)
                         if active and self.spec.key == "douyin" and not douyin_refreshed:
                             douyin_refreshed = True
                             self.state_changed.emit("登录成功，正在刷新抖店中控台")
@@ -408,10 +453,6 @@ class BrowserWorker(QThread):
                                     pass
                         if ready and self.spec.capture == "douyin" and self._room_id:
                             self._connect_compass()
-                        if ready and self.spec.capture == "douyin":
-                            fresh = self.page.locator('[class^="newCommentLabel"]')
-                            if fresh.count() and fresh.first.is_visible():
-                                fresh.first.click(timeout=1000)
                     try:
                         action, value = self.commands.get_nowait()
                     except queue.Empty:
