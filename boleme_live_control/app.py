@@ -22,6 +22,7 @@ from .browser_worker import BrowserWorker
 from .capture_types import TYPE_LABELS, available_capture_types, selected_capture_types
 from .voice_reply_policy import VoiceReplyPolicy, VOICE_REPLY_TYPES, selected_voice_reply_types
 from .platforms import PLATFORMS
+from .process_guard import legacy_douyin_grabber_pids
 from .scheduler import Phrase, Product, SequenceScheduler
 from .storage import (
     account_profile_path, accounts_for, add_account, bridge_token, data_dir,
@@ -122,6 +123,7 @@ class Console(QMainWindow):
         self._closing = False
         self._pending_account_id = None
         self._pending_platform = None
+        self._legacy_warning_box = None
         self._pending_events = deque(maxlen=2000)
         self._raw_events = {}
         self._event_count = 0
@@ -867,6 +869,8 @@ class Console(QMainWindow):
         if not self._save():
             return
         platform = self.platform.currentData()
+        if platform in {"douyin", "buyin", "douyin_eos"}:
+            self._warn_legacy_grabber()
         account_id = self.account.currentData()
         profile = account_profile_path(platform, account_id)
         self._clear_barrage()
@@ -892,6 +896,27 @@ class Console(QMainWindow):
         self.worker.start()
         self._log("正在启动浏览器")
         self.bridge.broadcast_status("正在启动浏览器", capture_state="starting")
+
+    def _warn_legacy_grabber(self):
+        """Warn once when the old Douyin collector may duplicate this capture."""
+        if self._legacy_warning_box is not None:
+            return
+        try:
+            if not legacy_douyin_grabber_pids():
+                return
+        except Exception:
+            return  # A process-inspection failure must not prevent connection.
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("采集冲突提醒")
+        box.setText(
+            "检测到旧版抖音弹幕插件正在运行。两个采集器同时工作可能造成重复弹幕，"
+            "请先关闭旧插件，再使用中控台采集。"
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.setWindowModality(Qt.WindowModality.NonModal)
+        self._legacy_warning_box = box
+        box.show()
 
     def _worker_state(self, text):
         self.connected = "已就绪" in text or "监听中" in text
