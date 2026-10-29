@@ -12,7 +12,7 @@ $entry = Join-Path $PSScriptRoot "run.py"
 $icon = Join-Path $PSScriptRoot "assets\boleme.ico"
 $image = Join-Path $PSScriptRoot "assets\boleme.png"
 if (-not (Test-Path -LiteralPath $icon) -or -not (Test-Path -LiteralPath $image)) {
-    throw "Missing brand icon assets; run scripts/render_icon.py first."
+    throw "Missing brand icon assets; restore assets/boleme.ico and assets/boleme.png from the repository."
 }
 $dist = Join-Path $PSScriptRoot "dist\$Name"
 if (Test-Path -LiteralPath $dist) {

@@ -10,3 +10,8 @@ profiles/
 settings.json
 .env
 .env.*
+
+# Local development and verification files are not part of the public source.
+tests/
+docs/
+scripts/render_icon.py
