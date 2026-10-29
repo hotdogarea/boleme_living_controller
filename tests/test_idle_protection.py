@@ -56,7 +56,6 @@ class IdleProtectionBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('window.restored'), 1)
         self.assertEqual(self.page.evaluate('window.sent'), 1)
         self.assertEqual(self.page.evaluate('window.lastText'), 'already generated reply')
-        self.assertEqual(len(self.worker._outgoing), 1)
         self.assertTrue(any('已恢复' in notice for notice in self.notices))
 
     def test_periodic_maintenance_restores_without_sending_any_message(self):
@@ -135,15 +134,14 @@ class IdleProtectionBrowserTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '未自动重发'):
                 self.worker._send('only one publish')
         self.assertEqual(self.page.evaluate('window.sent'), 1)
-        self.assertEqual(len(self.worker._outgoing), 1)
         received = []
         self.worker.event_received.connect(received.append)
         self.worker._publish([{'platform': 'buyin', 'type': 'comment', 'content': 'only one publish',
-                               'nickname': 'self', 'msg_id': 'fixture-self-echo'}])
+                               'nickname': 'viewer', 'msg_id': 'fixture-viewer-comment'}])
         self.app.processEvents()
-        self.assertEqual(received, [])
+        self.assertEqual([event['msg_id'] for event in received], ['fixture-viewer-comment'])
 
-    def test_successful_publish_filters_echo_before_click_returns(self):
+    def test_viewer_same_text_during_publish_is_not_filtered(self):
         self.page.locator('#shield').evaluate("el => el.style.display='none'")
         received = []
         self.worker.event_received.connect(received.append)
@@ -153,22 +151,21 @@ class IdleProtectionBrowserTests(unittest.TestCase):
             result = original(locator, **kwargs)
             if not kwargs.get('trial'):
                 self.worker._publish([{'platform': 'buyin', 'type': 'comment',
-                                      'content': 'one outgoing reply', 'nickname': 'self',
-                                      'user_id': '', 'msg_id': 'instant-echo'}])
+                                      'content': 'one outgoing reply', 'nickname': 'viewer',
+                                      'user_id': '', 'msg_id': 'viewer-same-text'}])
             return result
 
         with patch.object(Locator, 'click', click):
             self.worker._send('one outgoing reply')
         self.app.processEvents()
         self.assertEqual(self.page.evaluate('window.sent'), 1)
-        self.assertEqual(received, [])
+        self.assertEqual([event['msg_id'] for event in received], ['viewer-same-text'])
 
     def test_preflight_failure_does_not_filter_unsent_draft(self):
         self.page.locator('#shield').evaluate("el => el.style.display='none'")
         with patch.object(Locator, 'fill', side_effect=RuntimeError('fixture fill failed')):
             with self.assertRaisesRegex(RuntimeError, 'fixture fill failed'):
                 self.worker._send('unsent draft')
-        self.assertEqual(len(self.worker._outgoing), 0)
         self.assertEqual(self.page.evaluate('window.sent'), 0)
 
     def test_changed_comment_after_recovery_is_not_published(self):

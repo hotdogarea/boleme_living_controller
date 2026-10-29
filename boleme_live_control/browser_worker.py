@@ -1,12 +1,11 @@
 """All Playwright objects live on this thread; UI receives Qt signals only."""
 
-import hashlib
 import json
 import queue
 import re
 import secrets
 import time
-from collections import OrderedDict, deque
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,8 +16,6 @@ from .idle_protection import IdleProtectionGuard
 
 
 class BrowserWorker(QThread):
-    OUTGOING_HISTORY_LIMIT = 4096
-
     state_changed = pyqtSignal(str)
     event_received = pyqtSignal(dict)
     action_started = pyqtSignal(str)
@@ -45,7 +42,6 @@ class BrowserWorker(QThread):
         self._active_control_page = None
         self._browser_closed = False
         self._context_closed = False
-        self._outgoing = OrderedDict()
         self._xhs_sessions = []
         self._capture_issue_times = {}
         self._comment_response_notice_reported = False
@@ -80,9 +76,6 @@ class BrowserWorker(QThread):
         for event in events:
             if not event["content"] and event["type"] == "comment":
                 continue
-            if (event["type"] == "comment"
-                    and self._outgoing_key(event["content"]) in self._outgoing):
-                continue
             key = (event["platform"], event["msg_id"])
             if event["msg_id"] and key in self._seen:
                 continue
@@ -94,18 +87,6 @@ class BrowserWorker(QThread):
             event["session_id"] = self.session_id
             event["account_id"] = self.account_id
             self.event_received.emit(event)
-
-    @staticmethod
-    def _outgoing_key(text):
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-        return hashlib.sha256(normalized.encode("utf-8")).digest()
-
-    def _remember_outgoing(self, text):
-        key = self._outgoing_key(text)
-        self._outgoing[key] = None
-        self._outgoing.move_to_end(key)
-        if len(self._outgoing) > self.OUTGOING_HISTORY_LIMIT:
-            self._outgoing.popitem(last=False)
 
     def _response(self, response):
         url = response.url
@@ -202,9 +183,6 @@ class BrowserWorker(QThread):
                     if field.input_value(timeout=1000) != text.strip():
                         raise RuntimeError("恢复后评论框内容已变化，未自动重复发布，请重新确认内容")
                     button.click(trial=True, timeout=2000)
-        # Response callbacks can arrive before click returns, including an ambiguous timeout.
-        # Keep uncertain publish attempts too: their echoes must not trigger another reply.
-        self._remember_outgoing(text.strip())
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
         try:
             if has_button:
