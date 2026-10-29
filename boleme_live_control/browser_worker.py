@@ -11,7 +11,10 @@ from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .platforms import PLATFORMS, parse_kuaishou_message, parse_response, parse_xiaohongshu_frame
+from .platforms import (
+    PLATFORMS, PUBLISHER_NAME_SELECTORS, parse_kuaishou_message,
+    parse_response, parse_xiaohongshu_frame,
+)
 from .idle_protection import IdleProtectionGuard
 
 
@@ -45,6 +48,8 @@ class BrowserWorker(QThread):
         self._xhs_sessions = []
         self._capture_issue_times = {}
         self._comment_response_notice_reported = False
+        self._publisher_nickname = ""
+        self._next_publisher_check = 0.0
         self._idle_protection = IdleProtectionGuard(self.capture_notice.emit)
 
     def command(self, action: str, value=None):
@@ -73,6 +78,7 @@ class BrowserWorker(QThread):
                 self.state_changed.emit("中控台页面已关闭，采集停止")
 
     def _publish(self, events):
+        self._refresh_publisher_nickname()
         for event in events:
             if not event["content"] and event["type"] == "comment":
                 continue
@@ -86,7 +92,38 @@ class BrowserWorker(QThread):
                     self._seen.discard(self._seen_order.popleft())
             event["session_id"] = self.session_id
             event["account_id"] = self.account_id
+            event["is_self_comment"] = bool(
+                event["type"] == "comment" and self._publisher_nickname
+                and str(event.get("nickname") or "").strip() == self._publisher_nickname
+            )
             self.event_received.emit(event)
+
+    def _refresh_publisher_nickname(self):
+        source = PUBLISHER_NAME_SELECTORS.get(self.spec.key)
+        page = getattr(self, "page", None)
+        now = time.monotonic()
+        if not source or page is None or now < self._next_publisher_check:
+            return
+        # Set the deadline first because Playwright calls may dispatch response callbacks.
+        self._next_publisher_check = now + 2
+        previous = self._publisher_nickname
+        self._publisher_nickname = ""
+        try:
+            host, selector = source
+            if urlsplit(page.url).hostname != host or not page.locator(self.spec.ready).count():
+                return
+            field = page.locator(selector)
+            if field.count() != 1 or not field.is_visible():
+                return
+            name = field.inner_text(timeout=500).strip()
+            if not name or len(name) > 100 or any(char in name for char in ("\n", "\r", "*")):
+                return
+            self._publisher_nickname = name
+            if name != previous:
+                self.capture_notice.emit("已识别后台账号昵称；同昵称评论仅在助手显示，不推送语音引擎")
+        except Exception:
+            # Unknown or changed account information must not suppress viewer comments.
+            self._publisher_nickname = ""
 
     def _response(self, response):
         url = response.url
@@ -390,6 +427,7 @@ class BrowserWorker(QThread):
                     now = time.monotonic()
                     if now - last_check >= 2:
                         last_check = now
+                        self._refresh_publisher_nickname()
                         if self.spec.key == "xiaohongshu_pgy" and not pgy_opened:
                             logged_in_page = next((candidate for candidate in pages if candidate.locator(
                                 ".top-bar-right-user-item .top-bar-right-user-item-info-name"

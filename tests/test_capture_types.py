@@ -51,6 +51,20 @@ class CaptureTypeTests(unittest.TestCase):
         self.bridge.broadcast.assert_called_once()
         self.assertEqual(self.bridge.broadcast.call_args.args[0]["type"], "comment")
 
+    def test_self_comment_is_displayed_but_never_sent_to_voice_engine(self):
+        self.window._event(self.event("comment", is_self_comment=True, nickname="主播"))
+        self.window._flush_barrage()
+        self.assertEqual(self.window.barrage.rowCount(), 1)
+        self.assertEqual(self.window.barrage.item(0, 4).text(), "本人发言")
+        self.assertEqual(self.window.barrage.item(0, 5).text(), "—")
+        self.bridge.broadcast.assert_not_called()
+        self.window.only_pending.setChecked(True)
+        self.assertTrue(self.window.barrage.isRowHidden(0))
+        self.window._event(self.event("comment", msg_id="self2", is_self_comment=True))
+        self.window._flush_barrage()
+        self.assertTrue(self.window.barrage.isRowHidden(1))
+        self.bridge.broadcast.assert_not_called()
+
     def test_changes_are_saved_and_shared_by_douyin_backends(self):
         self.window._capture_type_actions["like"].setChecked(False)
         self.assertEqual(self.window.capability.text(), "采集类型：已选 6 类")

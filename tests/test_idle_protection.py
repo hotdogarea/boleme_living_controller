@@ -161,6 +161,28 @@ class IdleProtectionBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('window.sent'), 1)
         self.assertEqual([event['msg_id'] for event in received], ['viewer-same-text'])
 
+    def test_real_account_name_dom_marks_self_comment_without_text_matching(self):
+        from boleme_live_control.voice_protocol import to_voice_event
+        self.page.evaluate("""() => {
+            const ready = document.createElement('div'); ready.className = 'goodsPanel-test';
+            document.body.appendChild(ready);
+            const name = document.createElement('span');
+            name.className = 'btn-item-role-exchange-name__title';
+            name.textContent = '主播昵称'; document.body.appendChild(name);
+        }""")
+        received = []
+        self.worker.event_received.connect(received.append)
+        self.worker._publish([
+            {'platform': 'buyin', 'type': 'comment', 'nickname': '主播昵称',
+             'content': 'hello', 'msg_id': 'own'},
+            {'platform': 'buyin', 'type': 'comment', 'nickname': 'viewer',
+             'content': 'hello', 'msg_id': 'viewer'},
+        ])
+        self.app.processEvents()
+        self.assertEqual([e['is_self_comment'] for e in received], [True, False])
+        self.assertIsNone(to_voice_event(received[0]))
+        self.assertIsNotNone(to_voice_event(received[1]))
+
     def test_preflight_failure_does_not_filter_unsent_draft(self):
         self.page.locator('#shield').evaluate("el => el.style.display='none'")
         with patch.object(Locator, 'fill', side_effect=RuntimeError('fixture fill failed')):

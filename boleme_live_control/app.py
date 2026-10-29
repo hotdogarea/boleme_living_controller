@@ -407,10 +407,11 @@ class Console(QMainWindow):
                 except (TypeError, ValueError, OSError, OverflowError):
                     when = datetime.now().strftime("%H:%M:%S")
                 kind = str(event.get("type") or "")
-                status = "待发送" if kind == "comment" else "—"
+                own_comment = kind == "comment" and event.get("is_self_comment") is True
+                status = "本人发言" if own_comment else "待发送" if kind == "comment" else "—"
                 values = [when, str(event.get("nickname") or "未提供昵称"),
                           str(event.get("content") or ""), names.get(kind, kind), status,
-                           "发文字" if kind == "comment" else "—"]
+                           "发文字" if kind == "comment" and not own_comment else "—"]
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     if column == 0:
@@ -423,7 +424,7 @@ class Console(QMainWindow):
                         item.setToolTip("在公共评论框发送文字，不会艾特或定向回复该用户")
                     self.barrage.setItem(row, column, item)
                 self._raw_events[key] = event
-                if self.only_pending.isChecked() and kind != "comment":
+                if self.only_pending.isChecked() and (kind != "comment" or own_comment):
                     self.barrage.setRowHidden(row, True)
             self.barrage_count.setText(f"实时弹幕 ({self._event_count})")
             self.barrage.scrollToBottom()

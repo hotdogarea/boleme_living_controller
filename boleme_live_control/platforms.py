@@ -40,6 +40,13 @@ PLATFORMS = {
 }
 
 
+# Same current-account selectors as OBA; never use the editable local account remark.
+PUBLISHER_NAME_SELECTORS = {
+    "douyin": ("fxg.jinritemai.com", '[class^="index_userName"]'),
+    "buyin": ("buyin.jinritemai.com", "span.btn-item-role-exchange-name__title"),
+}
+
+
 def _event(platform: str, kind: str, msg: dict, *, text="", nick="", user_id="", msg_id="") -> dict:
     return {
         "platform": platform,

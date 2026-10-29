@@ -20,6 +20,8 @@ def to_voice_event(event: dict) -> dict | None:
     source = event.get("platform")
     platform = VOICE_PLATFORMS.get(source)
     kind = event.get("type")
+    if kind == "comment" and event.get("is_self_comment") is True:
+        return None
     if not platform or kind not in VOICE_TYPES:
         return None
     content = str(event.get("content") or "")[:500]
