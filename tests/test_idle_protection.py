@@ -183,6 +183,74 @@ class IdleProtectionBrowserTests(unittest.TestCase):
         self.assertIsNone(to_voice_event(received[0]))
         self.assertIsNotNone(to_voice_event(received[1]))
 
+    def test_all_platform_account_selectors_with_real_browser_dom(self):
+        from boleme_live_control.platforms import PLATFORMS
+        from boleme_live_control.voice_protocol import to_voice_event
+        fixtures = {
+            'douyin': '<div class="goodsPanel-test"></div><div class="index_userName-test">主播</div>',
+            'buyin': '<div class="goodsPanel-test"></div><span class="btn-item-role-exchange-name__title">主播</span>',
+            'douyin_eos': '<div class="layout-container-test"></div><div class="profile-container-test">主播</div>',
+            'xiaohongshu': '<div class="app-root-topbar-wrapper"></div><div class="user-info-wrapper"><span class="store-name">主播的店</span></div>',
+            'xiaohongshu_pgy': '<div id="redlive-pgy-app"><div class="control-container"></div></div><div class="top-bar-right-user-item"><div class="top-bar-right-user-item-info"><span class="top-bar-right-user-item-info-name">主播</span></div></div>',
+            'wechat': '<span class="finder-nickname">主播</span><iframe class="wujie_iframe" srcdoc="<div class=live-message-input-container><textarea></textarea></div>"></iframe>',
+            'kuaishou': '<div class="live-panel-test"></div><div class="nickname-test"><span class="name-test">主播</span></div>',
+            'taobao': '<div id="comment-page"><div class="tc-comment-reply"><textarea></textarea></div></div><div class="username-test">主播</div>',
+        }
+        self.assertEqual(set(fixtures), set(PLATFORMS))
+        for platform, html in fixtures.items():
+            with self.subTest(platform=platform):
+                url = ("https://liveplatform.taobao.com/restful/index/live/control?liveId=fixture"
+                       if platform == 'taobao' else PLATFORMS[platform].url)
+                self.page.goto(url)
+                self.page.set_content(html)
+                worker = BrowserWorker(platform, Path(tempfile.gettempdir()))
+                worker.page = self.page
+                received = []
+                worker.event_received.connect(received.append)
+                self.assertTrue(worker._control_ready(self.page))
+                worker._publish([
+                    {'platform': platform, 'type': 'comment', 'nickname': '主播',
+                     'content': 'hello', 'msg_id': 'own'},
+                    {'platform': platform, 'type': 'comment', 'nickname': 'viewer',
+                     'content': 'hello', 'msg_id': 'viewer'},
+                ])
+                self.app.processEvents()
+                self.assertEqual(worker._publisher_nickname, '主播')
+                self.assertEqual([e['is_self_comment'] for e in received], [True, False])
+                self.assertIsNone(to_voice_event(received[0]))
+                self.assertIsNotNone(to_voice_event(received[1]))
+
+    def test_homepage_identity_lookup_closes_page_and_preserves_control_page(self):
+        from boleme_live_control.platforms import PLATFORMS, PUBLISHER_PROFILE_URLS
+
+        def serve(route):
+            url = route.request.url
+            if url == PUBLISHER_PROFILE_URLS['wechat']:
+                html = '<span class="finder-nickname">主播</span>'
+            elif url == PUBLISHER_PROFILE_URLS['taobao']:
+                html = '<div class="username-test">主播</div>'
+            elif 'channels.weixin.qq.com' in url:
+                html = '<div class="live-message-input-container"><textarea></textarea></div>'
+            else:
+                html = '<div id="comment-page"><div class="tc-comment-reply"><textarea></textarea></div></div>'
+            route.fulfill(status=200, content_type='text/html; charset=utf-8', body=html)
+
+        self.context.unroute('**/*')
+        self.context.route('**/*', serve)
+        for platform in ('wechat', 'taobao'):
+            with self.subTest(platform=platform):
+                url = ("https://liveplatform.taobao.com/restful/index/live/control?liveId=fixture"
+                       if platform == 'taobao' else PLATFORMS[platform].url)
+                self.page.goto(url)
+                worker = BrowserWorker(platform, Path(tempfile.gettempdir()))
+                worker.context = self.context
+                worker.page = self.page
+                worker._refresh_publisher_nickname(allow_profile_lookup=True)
+                self.assertEqual(worker._publisher_nickname, '主播')
+                self.assertIs(worker.page, self.page)
+                self.assertEqual(self.page.url, url)
+                self.assertEqual(self.context.pages, [self.page])
+
     def test_preflight_failure_does_not_filter_unsent_draft(self):
         self.page.locator('#shield').evaluate("el => el.style.display='none'")
         with patch.object(Locator, 'fill', side_effect=RuntimeError('fixture fill failed')):

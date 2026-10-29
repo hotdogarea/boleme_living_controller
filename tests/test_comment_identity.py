@@ -1,10 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from boleme_live_control.browser_worker import BrowserWorker
-from boleme_live_control.platforms import PLATFORMS
+from boleme_live_control.platforms import PLATFORMS, PUBLISHER_NAME_SELECTORS, PUBLISHER_PROFILE_URLS
 from boleme_live_control.voice_protocol import to_voice_event
 
 
@@ -41,10 +41,8 @@ class CommentIdentityTests(unittest.TestCase):
         self.assertIsNotNone(to_voice_event(received[0]))
 
     def test_account_name_comes_only_from_unique_visible_trusted_page_field(self):
-        for platform, host, selector in (
-            ("douyin", "fxg.jinritemai.com", '[class^="index_userName"]'),
-            ("buyin", "buyin.jinritemai.com", "span.btn-item-role-exchange-name__title"),
-        ):
+        self.assertEqual(set(PUBLISHER_NAME_SELECTORS), set(PLATFORMS))
+        for platform, (host, selector) in PUBLISHER_NAME_SELECTORS.items():
             with self.subTest(platform=platform):
                 worker = BrowserWorker(platform, Path(tempfile.gettempdir()))
                 page = Mock(url=f"https://{host}/dashboard/live/control")
@@ -72,6 +70,73 @@ class CommentIdentityTests(unittest.TestCase):
                 page.url = "https://other.example/dashboard/live/control"
                 worker._refresh_publisher_nickname()
                 self.assertEqual(worker._publisher_nickname, "")
+
+    def test_same_nickname_rule_applies_on_every_platform(self):
+        for platform in PLATFORMS:
+            with self.subTest(platform=platform):
+                worker = BrowserWorker(platform, Path(tempfile.gettempdir()))
+                worker._publisher_nickname = "主播昵称"
+                received = []
+                worker.event_received.connect(received.append)
+                worker._publish([
+                    {"platform": platform, "type": "comment", "content": "same text",
+                     "nickname": name, "msg_id": str(index)}
+                    for index, name in enumerate(("主播昵称", "观众", "主播昵称2"))
+                ])
+                self.assertEqual([e["is_self_comment"] for e in received], [True, False, False])
+                self.assertEqual([e["msg_id"] for e in received if to_voice_event(e)], ["1", "2"])
+
+    def test_store_suffix_is_removed_only_for_xiaohongshu_storefront(self):
+        page = Mock(url="https://ark.xiaohongshu.com/live_center_control")
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.is_visible.return_value = True
+        page.locator.return_value.inner_text.return_value = " 主播的店 "
+        worker = BrowserWorker("xiaohongshu", Path(tempfile.gettempdir()))
+        self.assertEqual(worker._read_publisher_name(page, "ark.xiaohongshu.com", "name"), "主播")
+        worker = BrowserWorker("xiaohongshu_pgy", Path(tempfile.gettempdir()))
+        self.assertEqual(worker._read_publisher_name(page, "ark.xiaohongshu.com", "name"), "主播的店")
+
+    def test_profile_lookup_is_maintenance_only_cached_and_cleared_on_logout(self):
+        for platform, url in PUBLISHER_PROFILE_URLS.items():
+            with self.subTest(platform=platform):
+                host, selector = PUBLISHER_NAME_SELECTORS[platform]
+                worker = BrowserWorker(platform, Path(tempfile.gettempdir()))
+                worker.page = Mock(url=f"https://{host}/control")
+                worker.page.locator.return_value.count.return_value = 0
+                worker.context = Mock()
+                profile = worker.context.new_page.return_value
+                profile.url = url
+                profile.locator.return_value.count.return_value = 1
+                profile.locator.return_value.is_visible.return_value = True
+                profile.locator.return_value.inner_text.return_value = "主播昵称"
+                with patch.object(worker, "_control_ready", return_value=True) as ready:
+                    worker._refresh_publisher_nickname()
+                    worker.context.new_page.assert_not_called()
+                    worker._refresh_publisher_nickname(allow_profile_lookup=True)
+                    self.assertEqual(worker._publisher_nickname, "主播昵称")
+                    profile.goto.assert_called_once_with(url, wait_until="domcontentloaded", timeout=5000)
+                    profile.close.assert_called_once()
+                    worker._refresh_publisher_nickname(allow_profile_lookup=True)
+                    worker.context.new_page.assert_called_once()
+                    ready.return_value = False
+                    worker._refresh_publisher_nickname(allow_profile_lookup=True)
+                    self.assertEqual(worker._publisher_nickname, "")
+                    self.assertEqual(worker._publisher_profile_nickname, "")
+
+    def test_profile_failure_closes_page_throttles_retry_and_does_not_stop_capture(self):
+        worker = BrowserWorker("wechat", Path(tempfile.gettempdir()))
+        worker.page = Mock(url="https://channels.weixin.qq.com/platform/live/liveBuild")
+        worker.page.locator.return_value.count.return_value = 0
+        worker.context = Mock()
+        profile = worker.context.new_page.return_value
+        profile.goto.side_effect = RuntimeError("fixture network failure")
+        with patch.object(worker, "_control_ready", return_value=True):
+            worker._refresh_publisher_nickname(allow_profile_lookup=True)
+            worker._refresh_publisher_nickname(allow_profile_lookup=True)
+        profile.close.assert_called_once()
+        worker.context.new_page.assert_called_once()
+        self.assertEqual(worker._publisher_nickname, "")
+        self.assertFalse(worker._stopping)
 
     def test_same_text_from_different_viewers_is_not_filtered_on_any_platform(self):
         for platform in PLATFORMS:

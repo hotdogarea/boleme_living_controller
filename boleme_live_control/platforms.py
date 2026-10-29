@@ -44,6 +44,20 @@ PLATFORMS = {
 PUBLISHER_NAME_SELECTORS = {
     "douyin": ("fxg.jinritemai.com", '[class^="index_userName"]'),
     "buyin": ("buyin.jinritemai.com", "span.btn-item-role-exchange-name__title"),
+    "douyin_eos": ("eos.douyin.com", '[class^="profile-container"]'),
+    "xiaohongshu": ("ark.xiaohongshu.com", ".user-info-wrapper .store-name"),
+    "xiaohongshu_pgy": (
+        "pgy.xiaohongshu.com",
+        ".top-bar-right-user-item .top-bar-right-user-item-info .top-bar-right-user-item-info-name",
+    ),
+    "wechat": ("channels.weixin.qq.com", ".finder-nickname"),
+    "kuaishou": ("zs.kwaixiaodian.com", "[class^=nickname] [class^=name]"),
+    "taobao": ("liveplatform.taobao.com", "div[class^=username]"),
+}
+
+PUBLISHER_PROFILE_URLS = {
+    "wechat": "https://channels.weixin.qq.com/platform",
+    "taobao": "https://liveplatform.taobao.com/restful/index/home/dashboard-new",
 }
 
 

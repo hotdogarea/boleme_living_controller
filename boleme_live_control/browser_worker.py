@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .platforms import (
-    PLATFORMS, PUBLISHER_NAME_SELECTORS, parse_kuaishou_message,
+    PLATFORMS, PUBLISHER_NAME_SELECTORS, PUBLISHER_PROFILE_URLS, parse_kuaishou_message,
     parse_response, parse_xiaohongshu_frame,
 )
 from .idle_protection import IdleProtectionGuard
@@ -50,6 +50,10 @@ class BrowserWorker(QThread):
         self._comment_response_notice_reported = False
         self._publisher_nickname = ""
         self._next_publisher_check = 0.0
+        self._publisher_profile_nickname = ""
+        self._next_publisher_profile_attempt = 0.0
+        self._checking_publisher = False
+        self._publisher_warning_reported = False
         self._idle_protection = IdleProtectionGuard(self.capture_notice.emit)
 
     def command(self, action: str, value=None):
@@ -98,32 +102,87 @@ class BrowserWorker(QThread):
             )
             self.event_received.emit(event)
 
-    def _refresh_publisher_nickname(self):
+    def _control_ready(self, page):
+        if page.locator(self.spec.ready).count():
+            return True
+        if self.spec.key == "taobao":
+            return (urlsplit(page.url).path == "/restful/index/live/control"
+                    and page.locator(self.spec.input).count() > 0)
+        if self.spec.iframe:
+            return page.frame_locator(self.spec.iframe).locator(self.spec.ready).count() > 0
+        return False
+
+    def _read_publisher_name(self, page, host, selector):
+        if urlsplit(page.url).hostname != host:
+            return ""
+        field = page.locator(selector)
+        if field.count() != 1 or not field.is_visible():
+            return ""
+        name = field.inner_text(timeout=500).strip()
+        if not name or len(name) > 100 or any(char in name for char in ("\n", "\r", "*")):
+            return ""
+        if self.spec.key == "xiaohongshu" and name.endswith("的店"):
+            name = name[:-2].strip()
+        return name
+
+    def _lookup_publisher_profile(self, url, host, selector):
+        profile = None
+        try:
+            profile = self.context.new_page()
+            profile.goto(url, wait_until="domcontentloaded", timeout=5000)
+            if urlsplit(profile.url).hostname != host:
+                return ""
+            profile.locator(selector).first.wait_for(state="visible", timeout=1500)
+            return self._read_publisher_name(profile, host, selector)
+        except Exception:
+            return ""
+        finally:
+            if profile is not None:
+                try:
+                    profile.close()
+                except Exception:
+                    pass
+
+    def _refresh_publisher_nickname(self, *, allow_profile_lookup=False):
         source = PUBLISHER_NAME_SELECTORS.get(self.spec.key)
         page = getattr(self, "page", None)
         now = time.monotonic()
-        if not source or page is None or now < self._next_publisher_check:
+        if (not source or page is None or self._checking_publisher
+                or (now < self._next_publisher_check and not allow_profile_lookup)):
             return
-        # Set the deadline first because Playwright calls may dispatch response callbacks.
+        # Reading a page can dispatch capture callbacks; never navigate from those callbacks.
         self._next_publisher_check = now + 2
+        self._checking_publisher = True
         previous = self._publisher_nickname
-        self._publisher_nickname = ""
+        name = ""
         try:
             host, selector = source
-            if urlsplit(page.url).hostname != host or not page.locator(self.spec.ready).count():
+            if urlsplit(page.url).hostname != host or not self._control_ready(page):
+                self._publisher_profile_nickname = ""
+                self._publisher_nickname = ""
                 return
-            field = page.locator(selector)
-            if field.count() != 1 or not field.is_visible():
-                return
-            name = field.inner_text(timeout=500).strip()
-            if not name or len(name) > 100 or any(char in name for char in ("\n", "\r", "*")):
-                return
-            self._publisher_nickname = name
-            if name != previous:
-                self.capture_notice.emit("已识别后台账号昵称；同昵称评论仅在助手显示，不推送语音引擎")
+            name = self._read_publisher_name(page, host, selector)
+            profile_url = PUBLISHER_PROFILE_URLS.get(self.spec.key)
+            if not name and profile_url:
+                if (allow_profile_lookup and not self._publisher_profile_nickname
+                        and now >= self._next_publisher_profile_attempt):
+                    self._next_publisher_profile_attempt = now + 60
+                    self._publisher_profile_nickname = self._lookup_publisher_profile(profile_url, host, selector)
+                name = self._publisher_profile_nickname
         except Exception:
             # Unknown or changed account information must not suppress viewer comments.
-            self._publisher_nickname = ""
+            name = ""
+            self._publisher_profile_nickname = ""
+        finally:
+            self._checking_publisher = False
+        self._publisher_nickname = name
+        if name:
+            self._publisher_warning_reported = False
+            if name != previous:
+                self.capture_notice.emit("已识别后台账号昵称；同昵称评论仅在助手显示，不推送语音引擎")
+        elif allow_profile_lookup and not self._publisher_warning_reported:
+            self._publisher_warning_reported = True
+            self.capture_notice.emit("未读取到后台账号昵称；暂不自动排除本人评论，请保留语音引擎的UID或昵称过滤")
 
     def _response(self, response):
         url = response.url
@@ -427,7 +486,6 @@ class BrowserWorker(QThread):
                     now = time.monotonic()
                     if now - last_check >= 2:
                         last_check = now
-                        self._refresh_publisher_nickname()
                         if self.spec.key == "xiaohongshu_pgy" and not pgy_opened:
                             logged_in_page = next((candidate for candidate in pages if candidate.locator(
                                 ".top-bar-right-user-item .top-bar-right-user-item-info-name"
@@ -445,7 +503,7 @@ class BrowserWorker(QThread):
                                     self.action_result.emit("connect", False, f"蒲公英中控页未打开: {exc}")
                         if self.spec.key != "taobao":
                             for candidate in pages:
-                                if candidate.locator(self.spec.ready).count():
+                                if self._control_ready(candidate):
                                     self.page = candidate
                                     break
                         if self.spec.key == "taobao" and not taobao_entered:
@@ -454,7 +512,7 @@ class BrowserWorker(QThread):
                                 self.page = next(candidate for candidate in pages if "/live/control?liveId=" in candidate.url)
                         if self.spec.key == "taobao" and not taobao_entered:
                             taobao_entered = self._enter_taobao_control()
-                        active = (taobao_entered if self.spec.key == "taobao" else self.page.locator(self.spec.ready).count() > 0)
+                        active = taobao_entered if self.spec.key == "taobao" else self._control_ready(self.page)
                         self._maintain_douyin_pages(pages)
                         if active and self.spec.key == "douyin" and not douyin_refreshed:
                             douyin_refreshed = True
@@ -468,8 +526,12 @@ class BrowserWorker(QThread):
                         if active != ready:
                             ready = active
                             comment_ready = False
+                            if not ready:
+                                self._publisher_nickname = ""
+                                self._publisher_profile_nickname = ""
                             self.state_changed.emit("中控台已就绪" if ready else "等待登录或直播中控台")
                         if ready:
+                            self._refresh_publisher_nickname(allow_profile_lookup=True)
                             if self._active_control_page is not self.page:
                                 self._active_control_page = self.page
                                 self.page.on("close", self._on_control_page_closed)
