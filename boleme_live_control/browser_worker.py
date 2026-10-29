@@ -456,7 +456,7 @@ class BrowserWorker(QThread):
                         kwargs = {"channel": channel} if channel else {}
                         self.context = playwright.chromium.launch_persistent_context(
                             str(self.profile_path), headless=False, no_viewport=True,
-                            args=["--start-maximized", "--disable-background-timer-throttling",
+                            args=["--window-size=1600,900", "--disable-background-timer-throttling",
                                   "--disable-renderer-backgrounding"],
                             **kwargs,
                         )
