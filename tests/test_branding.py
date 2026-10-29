@@ -48,6 +48,9 @@ class BrandingTests(unittest.TestCase):
         build = (Path(__file__).resolve().parents[1] / "build.ps1").read_text(encoding="utf-8")
         self.assertIn('--add-data "${icon};assets"', build)
         self.assertIn('--icon $icon', build)
+        self.assertIn("Copy-Item -LiteralPath $image -Destination (Join-Path $dist 'logo.png')", build)
+        self.assertIn("Copy-Item -LiteralPath $icon -Destination (Join-Path $dist 'logo.ico')", build)
+        self.assertIn("'logo.png', 'logo.ico'", build)
 
     def test_identity_and_icon_are_configured_before_first_window(self):
         from boleme_live_control.app import main

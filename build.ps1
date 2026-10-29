@@ -24,7 +24,7 @@ if (Test-Path -LiteralPath $dist) {
         throw "Unexpected build output path: $resolved"
     }
     $names = @(Get-ChildItem -LiteralPath $resolved -Force | ForEach-Object Name)
-    if (@($names | Where-Object { $_ -notin @('_internal', "${Name}.exe") }).Count -gt 0) {
+    if (@($names | Where-Object { $_ -notin @('_internal', "${Name}.exe", 'logo.png', 'logo.ico') }).Count -gt 0) {
         throw "Build output contains unexpected files; refusing to replace it."
     }
     $running = Get-CimInstance Win32_Process -Filter "name = '${Name}.exe'" |
@@ -44,4 +44,6 @@ if (Test-Path -LiteralPath $dist) {
     --workpath (Join-Path $PSScriptRoot "build") `
     --specpath (Join-Path $PSScriptRoot "build") $entry
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with code $LASTEXITCODE" }
+Copy-Item -LiteralPath $image -Destination (Join-Path $dist 'logo.png') -Force -ErrorAction Stop
+Copy-Item -LiteralPath $icon -Destination (Join-Path $dist 'logo.ico') -Force -ErrorAction Stop
 Write-Host "Built: $dist"
