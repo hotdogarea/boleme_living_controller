@@ -97,6 +97,10 @@ class ToggleSwitch(QCheckBox):
         self.setFixedSize(48, 26)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    def hitButton(self, position):
+        # The native checkbox indicator is smaller than the custom-painted switch.
+        return self.rect().contains(position)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -990,6 +994,11 @@ class Console(QMainWindow):
             self._worker_busy = False
         names = {"send": "发送文字", "popup": "商品讲解", "capture": "弹幕采集", "connect": "连接中控台"}
         self._log(f"{'完成' if success else '失败'} · {names.get(action, action)} · {detail}")
+        if action == "popup" and not success and self.product_schedule is not None:
+            self.product_enabled.setChecked(False)
+            self.product_state.setText("讲解失败")
+            self.product_state.setToolTip(str(detail))
+            self._log("自动讲解已停止，请确认商品序号、讲解按钮和中控台状态后，重新开启开关；弹幕采集不受影响")
 
     def _action_started(self, action):
         self._worker_busy = True
@@ -1090,11 +1099,13 @@ class Console(QMainWindow):
             self._set_product_state(True)
             self._log("已启动自动讲解")
         except ValueError as exc:
-            QMessageBox.warning(self, "商品讲解", str(exc))
             self.product_enabled.setChecked(False)
+            self._log(f"自动讲解未启动：{exc}")
+            QMessageBox.warning(self, "商品讲解", str(exc))
 
     def _set_product_state(self, running):
         self.product_state.setText("运行中" if running else "已停止")
+        self.product_state.setToolTip("")
         self.product_state.setProperty("running", running)
         self.product_state.style().unpolish(self.product_state)
         self.product_state.style().polish(self.product_state)
