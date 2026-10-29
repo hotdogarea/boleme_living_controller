@@ -143,6 +143,34 @@ class IdleProtectionBrowserTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(received, [])
 
+    def test_successful_publish_filters_echo_before_click_returns(self):
+        self.page.locator('#shield').evaluate("el => el.style.display='none'")
+        received = []
+        self.worker.event_received.connect(received.append)
+        original = Locator.click
+
+        def click(locator, **kwargs):
+            result = original(locator, **kwargs)
+            if not kwargs.get('trial'):
+                self.worker._publish([{'platform': 'buyin', 'type': 'comment',
+                                      'content': 'one outgoing reply', 'nickname': 'self',
+                                      'user_id': '', 'msg_id': 'instant-echo'}])
+            return result
+
+        with patch.object(Locator, 'click', click):
+            self.worker._send('one outgoing reply')
+        self.app.processEvents()
+        self.assertEqual(self.page.evaluate('window.sent'), 1)
+        self.assertEqual(received, [])
+
+    def test_preflight_failure_does_not_filter_unsent_draft(self):
+        self.page.locator('#shield').evaluate("el => el.style.display='none'")
+        with patch.object(Locator, 'fill', side_effect=RuntimeError('fixture fill failed')):
+            with self.assertRaisesRegex(RuntimeError, 'fixture fill failed'):
+                self.worker._send('unsent draft')
+        self.assertEqual(len(self.worker._outgoing), 0)
+        self.assertEqual(self.page.evaluate('window.sent'), 0)
+
     def test_changed_comment_after_recovery_is_not_published(self):
         self.page.locator('#shield').evaluate("el => el.style.display='none'")
         self.page.locator('#shield button').evaluate("""el => el.onclick=() => {
