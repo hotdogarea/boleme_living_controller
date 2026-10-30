@@ -16,6 +16,7 @@ from .platforms import (
     parse_response, parse_xiaohongshu_frame,
 )
 from .idle_protection import IdleProtectionGuard
+from .browser_runtime import prepare_browser_runtime
 
 
 class BrowserWorker(QThread):
@@ -363,24 +364,45 @@ class BrowserWorker(QThread):
             return
         if self.spec.key in ("xiaohongshu", "xiaohongshu_pgy"):
             row.hover(timeout=3000)
-        buttons = row.locator(self.spec.popup)
+        buttons = row.locator(self.spec.popup).filter(visible=True)
+
+        def label_pattern(labels):
+            return re.compile(r"^\s*(?:" + "|".join(
+                r"\s*".join(re.escape(char) for char in label) for label in set(labels)
+            ) + r")\s*$")
+
+        start_pattern = label_pattern((self.spec.popup_start, "开始讲解", "讲解"))
+        stop_pattern = label_pattern((self.spec.popup_stop, "取消讲解", "结束讲解", "停止讲解"))
+
         def click_popup(target):
-            target.click(timeout=5000)
+            target.click(timeout=8000)
             if self.spec.key == "kuaishou":
                 confirm = page.locator(".ant-modal-root button:last-child")
                 if confirm.count():
                     confirm.click(timeout=2000)
 
-        candidates = [(button, button.inner_text().strip()) for button in buttons.all()]
-        active = next((button for button, label in candidates if self.spec.popup_stop in label), None)
-        if active:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        active = buttons.filter(has_text=stop_pattern).first
+        if active.count():
+            self.capture_notice.emit(f"商品 {number} 正在讲解，正在结束本次讲解并等待按钮恢复")
             click_popup(active)
-            page.wait_for_timeout(150)
-            candidates = [(button, button.inner_text().strip()) for button in row.locator(self.spec.popup).all()]
-        target = next((button for button, label in candidates if self.spec.popup_start in label and self.spec.popup_stop not in label), None)
-        if target is None:
-            raise RuntimeError(f"商品 {number} 的讲解按钮不可用")
-        click_popup(target)
+        try:
+            # Re-resolve the button after asynchronous updates; never reuse a text snapshot.
+            click_popup(buttons.filter(has_text=start_pattern).first)
+        except PlaywrightTimeout as exc:
+            labels = " / ".join(buttons.all_text_contents())[:120] or "无可见讲解按钮"
+            raise RuntimeError(
+                f"商品 {number} 的讲解按钮在8秒内未恢复可点击状态（当前：{labels}）；"
+                "可能存在加载、禁用或弹窗遮挡；为避免重复操作，本次不自动补点"
+            ) from exc
+        try:
+            buttons.filter(has_text=stop_pattern).first.wait_for(state="visible", timeout=8000)
+        except PlaywrightTimeout as exc:
+            raise RuntimeError(
+                f"商品 {number} 已点击讲解，但8秒内未确认进入讲解状态；"
+                "请查看后台是否已生效，本次不自动重复点击"
+            ) from exc
 
     def _enter_taobao_control(self):
         live_id = self.page.locator(
@@ -444,11 +466,15 @@ class BrowserWorker(QThread):
             self.state_changed.emit("浏览器已打开，请完成登录并进入直播中控台")
 
     def run(self):
+        stage = "检查浏览器运行组件"
         try:
+            prepare_browser_runtime(self.capture_notice.emit)
             from playwright.sync_api import sync_playwright
 
             self.profile_path.mkdir(parents=True, exist_ok=True)
+            stage = "启动Playwright驱动"
             with sync_playwright() as playwright:
+                stage = "启动浏览器"
                 self.context = None
                 errors = []
                 for channel in ("msedge", "chrome", None):
@@ -467,7 +493,9 @@ class BrowserWorker(QThread):
                     raise RuntimeError("浏览器启动失败。请安装 Edge/Chrome 或 Playwright Chromium。" + " | ".join(errors))
                 self.context.on("close", self._on_context_closed)
                 self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+                stage = "加载中控台"
                 self._prepare()
+                stage = "运行中控台"
                 last_check = 0.0
                 ready = False
                 comment_ready = False
@@ -577,6 +605,12 @@ class BrowserWorker(QThread):
                     self.context.close()
         except Exception as exc:
             if not self._browser_closed and not self._stopping:
-                self.action_result.emit("connect", False, str(exc))
+                detail = f"{stage}失败（{type(exc).__name__}）：{exc}"
+                if isinstance(exc, AttributeError) and "PlaywrightContextManager" in str(exc):
+                    detail += (
+                        "；Playwright驱动未完成初始化，不代表未安装浏览器。"
+                        "请完整解压程序及_internal目录，并检查安全软件隔离记录；不要只复制EXE"
+                    )
+                self.action_result.emit("connect", False, detail)
         finally:
             self.state_changed.emit("已停止")

@@ -9,7 +9,9 @@ if __name__ == "__main__":
     if "--smoke-browser" in sys.argv:
         try:
             from playwright.sync_api import sync_playwright
+            from boleme_live_control.browser_runtime import prepare_browser_runtime
 
+            prepare_browser_runtime()
             with sync_playwright() as playwright:
                 for channel in ("msedge", "chrome", None):
                     try:

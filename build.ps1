@@ -46,4 +46,9 @@ if (Test-Path -LiteralPath $dist) {
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with code $LASTEXITCODE" }
 Copy-Item -LiteralPath $image -Destination (Join-Path $dist 'logo.png') -Force -ErrorAction Stop
 Copy-Item -LiteralPath $icon -Destination (Join-Path $dist 'logo.ico') -Force -ErrorAction Stop
+foreach ($relative in @('_internal\playwright\driver\node.exe', '_internal\playwright\driver\package\cli.js')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $dist $relative) -PathType Leaf)) {
+        throw "Packaged browser driver is incomplete: $relative"
+    }
+}
 Write-Host "Built: $dist"
