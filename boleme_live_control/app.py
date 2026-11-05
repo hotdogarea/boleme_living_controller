@@ -92,6 +92,26 @@ def _table(columns, stretch=0, tooltips=()):
     return table
 
 
+class CaptureTypeMenu(QMenu):
+    def mouseReleaseEvent(self, event):
+        action = self.actionAt(event.pos())
+        if (event.button() == Qt.MouseButton.LeftButton and action is not None
+                and action.isEnabled() and action.isCheckable()):
+            action.trigger()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        action = self.activeAction()
+        if (event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and action is not None and action.isEnabled() and action.isCheckable()):
+            action.trigger()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class PositiveIntervalDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
@@ -240,7 +260,7 @@ class Console(QMainWindow):
         self.capability.setObjectName("capability")
         self.capability.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.capability.setToolTip("选择显示并推送到语音引擎的弹幕类型；公屏文字发送由下方“文字回复类型”单独控制。修改后自动保存。")
-        self.capture_type_menu = QMenu(self.capability)
+        self.capture_type_menu = CaptureTypeMenu(self.capability)
         self.capability.setMenu(self.capture_type_menu)
         self._capture_type_actions = {}
         live_header.addWidget(self.capability)
