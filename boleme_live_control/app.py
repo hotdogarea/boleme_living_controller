@@ -78,9 +78,11 @@ QTextEdit#logView { background: #171d20; }
 """
 
 
-def _table(columns, stretch=0):
+def _table(columns, stretch=0, tooltips=()):
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(columns)
+    for column, tooltip in enumerate(tooltips):
+        table.horizontalHeaderItem(column).setToolTip(tooltip)
     table.horizontalHeader().setSectionResizeMode(stretch, QHeaderView.ResizeMode.Stretch)
     table.verticalHeader().setVisible(False)
     table.verticalHeader().setDefaultSectionSize(38)
@@ -249,7 +251,17 @@ class Console(QMainWindow):
         clear_barrage.clicked.connect(self._clear_barrage)
         live_header.addWidget(clear_barrage)
         live_layout.addLayout(live_header)
-        self.barrage = _table(["时间", "用户昵称", "消息内容", "消息类型", "文字状态", "操作"], stretch=2)
+        self.barrage = _table(
+            ["时间", "用户昵称", "消息内容", "消息类型", "文字状态", "操作"], stretch=2,
+            tooltips=(
+                "这条弹幕的时间，按本机时间显示；平台没有提供时间时，显示收到消息的时间。",
+                "平台提供的用户昵称，不是用户 UID；未提供昵称时会显示提示。",
+                "观众评论或平台事件的内容；鼠标停在消息上可查看完整文字。",
+                "平台提供的事件类型，例如评论、进房、点赞或订单；不同平台支持的类型不同。",
+                "该条消息的公屏文字发送状态，不代表语音播报状态。\n本人发言仅在助手中显示，不推送到语音引擎。",
+                "点击“发文字”可参考这条评论编辑内容。\n发送的是直播间公开发言，不会自动艾特或私信该用户。",
+            ),
+        )
         self.barrage.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.barrage.setColumnWidth(0, 90)
         self.barrage.setColumnWidth(1, 145)
@@ -304,7 +316,14 @@ class Console(QMainWindow):
         self.phrase_enabled.toggled.connect(self._toggle_phrases)
         phrase_header.addWidget(self.phrase_enabled)
         phrase_layout.addLayout(phrase_header)
-        self.phrases = _table(["快捷语", "间隔（秒）"])
+        self.phrases = _table(
+            ["快捷语", "间隔（秒）"],
+            tooltips=(
+                "要自动发到直播间公屏的文字，可点击编辑。\n开启后按列表从上到下发送，最后一条发完再从第一条循环。",
+                "发送本条快捷语后，等待多少秒再发送下一条；只有一条时，表示重复发送的间隔。\n"
+                "建议不低于30秒，避免发送过于频繁；这不是强制限制，具体频率以平台提示为准。",
+            ),
+        )
         self.phrases.setItemDelegateForColumn(1, PositiveIntervalDelegate(self.phrases))
         self.phrases.setColumnWidth(1, 150)
         phrase_layout.addWidget(self.phrases, 1)
@@ -351,7 +370,15 @@ class Console(QMainWindow):
         self.delete_product_button.clicked.connect(self._delete_product)
         product_actions.addWidget(self.delete_product_button)
         product_layout.addLayout(product_actions)
-        self.products = _table(["商品序号", "重复次数", "间隔（秒）"])
+        self.products = _table(
+            ["商品序号", "重复次数", "间隔（秒）"],
+            tooltips=(
+                "填写平台中控台商品列表中的序号，不是商品 ID 或链接。\n例如填写 2，就操作中控台的 2 号商品；单品只需保留一条。",
+                "本商品连续执行讲解的次数，完成后切换到下一行商品。\n例如填 3：先讲解本商品3次，再讲解下一件；全部完成后重新循环。",
+                "本次讲解操作发起后，等待多少秒再执行下一次；不是整场任务的时长。\n"
+                "建议不低于30秒，避免频繁点击；这不是强制限制，具体频率以平台提示为准。",
+            ),
+        )
         self.products.setObjectName("productTable")
         self.products.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         for column in range(self.products.columnCount()):
