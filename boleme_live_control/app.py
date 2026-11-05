@@ -7,13 +7,13 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QLockFile, Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPixmap
+from PyQt6.QtCore import QLockFile, QRegularExpression, Qt, QTimer
+from PyQt6.QtGui import QColor, QPainter, QPixmap, QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
     QDialog, QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidget, QMenu, QToolButton,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QStyledItemDelegate, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .bridge import Bridge
@@ -88,6 +88,17 @@ def _table(columns, stretch=0):
     table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     table.setAlternatingRowColors(True)
     return table
+
+
+class PositiveIntervalDelegate(QStyledItemDelegate):
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        editor.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]*"), editor))
+        return editor
+
+    def setModelData(self, editor, model, index):
+        if editor.hasAcceptableInput():
+            model.setData(index, editor.text(), Qt.ItemDataRole.EditRole)
 
 
 class ToggleSwitch(QCheckBox):
@@ -294,6 +305,7 @@ class Console(QMainWindow):
         phrase_header.addWidget(self.phrase_enabled)
         phrase_layout.addLayout(phrase_header)
         self.phrases = _table(["快捷语", "间隔（秒）"])
+        self.phrases.setItemDelegateForColumn(1, PositiveIntervalDelegate(self.phrases))
         self.phrases.setColumnWidth(1, 150)
         phrase_layout.addWidget(self.phrases, 1)
         phrase_actions = QHBoxLayout()
@@ -1067,16 +1079,26 @@ class Console(QMainWindow):
             self.phrase_schedule = None
             return
         try:
-            items = [Phrase(text, int(interval)) for text, interval in self._rows(self.phrases) if text]
-            if not items or any(item.interval < 1 for item in items):
+            items = []
+            for row, (text, interval) in enumerate(self._rows(self.phrases), start=1):
+                if not text:
+                    continue
+                if not interval.isascii() or not interval.isdecimal() or int(interval) < 1:
+                    self.phrases.setCurrentCell(row - 1, 1)
+                    raise ValueError(f"第 {row} 条快捷语的间隔不正确，请填写大于 0 的整数秒数，例如 60。")
+                items.append(Phrase(text, int(interval)))
+            if not items:
                 raise ValueError("请填写快捷语与大于 0 的间隔")
             if not self.connected:
                 raise ValueError("请先连接中控台")
+            if not self._save():
+                self.phrase_enabled.setChecked(False)
+                return
             self.phrase_schedule = SequenceScheduler(items)
-            self._save()
         except ValueError as exc:
-            QMessageBox.warning(self, "快捷语", str(exc))
             self.phrase_enabled.setChecked(False)
+            self._log(f"自动发送快捷语未启动：{exc}")
+            QMessageBox.warning(self, "快捷语", str(exc))
 
     def _toggle_products(self, enabled):
         if not enabled:
