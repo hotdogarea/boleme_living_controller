@@ -297,6 +297,8 @@ class Console(QMainWindow):
             checkbox = QCheckBox(label)
             checkbox.setChecked(kind in selected_voice_reply_types(self.settings))
             checkbox.setToolTip("仅发送语音引擎已经生成的文案，不再次查询知识库。" if kind == "comment" else
+                                "感谢文字以语音引擎中设置并生成的“订单感谢”模板文案为准。\n"
+                                "未使用语音引擎时，助手不会自动生成订单感谢，也没有独立的默认模板。\n"
                                 "同一订单最多感谢一次；与其他文字间隔至少30秒，繁忙时跳过，不积压补发。")
             checkbox.toggled.connect(self._voice_reply_types_changed)
             self.voice_reply_checks[kind] = checkbox
